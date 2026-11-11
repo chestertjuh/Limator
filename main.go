@@ -16,7 +16,7 @@ func usage() {
 usage:
   limator rules
   limator scan   <dir> [-c config.json]
-  limator report <dir> [-c config.json] -o file [-f json|sarif]
+  limator report <dir> [-c config.json] -o file [-f json|sarif|html]
   limator gate   <dir> [-c config.json] -b baseline.json
   limator fix    <dir> [-c config.json] [-n yes]`)
 	os.Exit(2)
@@ -79,6 +79,8 @@ func main() {
 			out, err = json.MarshalIndent(rep, "", "  ")
 		case "sarif":
 			out, err = sarif(rep)
+		case "html":
+			out, err = htmlReport(rep)
 		default:
 			usage()
 		}

@@ -310,3 +310,22 @@ func TestSameCode(t *testing.T) {
 		t.Error("code change accepted")
 	}
 }
+
+func TestHTMLReportIsSelfContained(t *testing.T) {
+	rep := &Report{Version: version, Hash: "abc", Rules: rules, Counts: map[string]int{"L004": 1}}
+	rep.Findings = []Finding{{"L004", "a.go", 3, "</script><b>x"}}
+	raw, err := htmlReport(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(raw)
+	if strings.Contains(page, "http://") || strings.Contains(page, "https://") || strings.Contains(page, " src=") {
+		t.Error("report loads something from outside the file")
+	}
+	if strings.Count(page, "</script>") != 2 {
+		t.Error("finding text can break out of the data block")
+	}
+	if !strings.Contains(page, `"a.go"`) {
+		t.Error("findings are missing from the page")
+	}
+}

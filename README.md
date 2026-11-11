@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.3.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON and SARIF reports. Every rule has a test.
+Status: 0.3.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -14,6 +14,7 @@ limator rules
 limator scan   ./myproject
 limator report ./myproject -o report.json
 limator report ./myproject -o report.sarif -f sarif
+limator report ./myproject -o report.html -f html
 limator gate   ./myproject -b baseline.json
 limator fix    ./myproject -n yes
 limator fix    ./myproject
