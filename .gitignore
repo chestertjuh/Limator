@@ -1,0 +1,6 @@
+limator.exe
+limator
+*.exe~
+report.json
+report.sarif
+baseline.json
