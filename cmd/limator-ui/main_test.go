@@ -91,3 +91,30 @@ func TestReport(t *testing.T) {
 		t.Errorf("report: %d %q", w.Code, w.Body.String())
 	}
 }
+
+func TestMarkAsReadAndDocuments(t *testing.T) {
+	s, calls := testServer(t)
+	s.who = "reviewer"
+	for _, body := range []string{"a=read", "a=read&file=a.go", "a=read&file=-o&fn=x", "a=read&file=a.go&fn=-c"} {
+		if w := do(s, "POST", "/run?t=secret", body); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d", body, w.Code)
+		}
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("scanner ran on a refused request: %v", *calls)
+	}
+	if w := do(s, "POST", "/run?t=secret", "a=read&file=a.go&fn=load"); w.Code != http.StatusOK {
+		t.Errorf("read: %d", w.Code)
+	}
+	if got := strings.Join((*calls)[0], " "); got != "read proj -c cfg.json -who reviewer -f a.go -fn load" {
+		t.Errorf("read ran: %s", got)
+	}
+	for _, path := range []string{"/readlist", "/audit"} {
+		if w := do(s, "GET", path+"?t=secret", ""); w.Code != http.StatusOK {
+			t.Errorf("%s: %d", path, w.Code)
+		}
+		if w := do(s, "GET", path, ""); w.Code != http.StatusForbidden {
+			t.Errorf("%s without token: %d", path, w.Code)
+		}
+	}
+}

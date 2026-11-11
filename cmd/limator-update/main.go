@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -18,11 +19,13 @@ import (
 const (
 	maxDownload = 512 << 20
 	vulnURL     = "https://vuln.go.dev/vulndb.zip"
+	indexURL    = "https://vuln.go.dev/index/db.json"
 )
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   limator-update vulndb -dir <folder> [-url address]
+  limator-update check  -dir <folder> [-url address]
   limator-update pack   -url <address> -sha256 <hash> -o <file>`)
 	os.Exit(2)
 }
@@ -146,6 +149,35 @@ func updatePack(url, want, out string) error {
 	return os.WriteFile(out, raw, 0o644)
 }
 
+func modified(raw []byte) string {
+	var v struct {
+		Modified string `json:"modified"`
+	}
+	if json.Unmarshal(raw, &v) != nil {
+		return ""
+	}
+	return v.Modified
+}
+
+func checkVulnDB(dir, url string) (string, error) {
+	remote, err := fetch(url)
+	if err != nil {
+		return "", err
+	}
+	want := modified(remote)
+	if want == "" {
+		return "", fmt.Errorf("%s: no modification time", url)
+	}
+	local, err := os.ReadFile(filepath.Join(dir, "index", "db.json"))
+	if err != nil {
+		return "update available: no local copy, remote is " + want, nil
+	}
+	if have := modified(local); have != want {
+		return "update available: local " + have + ", remote " + want, nil
+	}
+	return "up to date: " + want, nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -171,6 +203,18 @@ func main() {
 			fail(err)
 		}
 		fmt.Printf("limator-update: %s written to %s; the previous copy is kept in %s.old\n", msg, *dir, *dir)
+	case "check":
+		if *dir == "" {
+			usage()
+		}
+		if *url == "" {
+			*url = indexURL
+		}
+		msg, err := checkVulnDB(*dir, *url)
+		if err != nil {
+			fail(err)
+		}
+		fmt.Println("limator-update:", msg)
 	case "pack":
 		if *url == "" || *out == "" {
 			usage()

@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.9.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.10.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -86,7 +86,7 @@ go build -o limator-ui ./cmd/limator-ui
 limator-ui -dir ./myproject
 ```
 
-It listens on 127.0.0.1 only and prints a link with a one-time token; requests without that token are refused. It runs the scanner as a separate process, so the scanner itself stays free of network code. Applying a fix asks for confirmation first.
+Besides the report it shows the reading list, where you can mark a function as read (start it with `-who <name>`), and the audit summary. It listens on 127.0.0.1 only and prints a link with a one-time token; requests without that token are refused. It runs the scanner as a separate process, so the scanner itself stays free of network code. Applying a fix asks for confirmation first.
 
 ## Inventory and audit
 
@@ -138,10 +138,11 @@ A plug-in is any program that writes its results to a file. Limator reads that f
 ```
 go build -o limator-update ./cmd/limator-update
 limator-update vulndb -dir ./vulndb
+limator-update check -dir ./vulndb
 limator-update pack -url https://example.org/pack.json -sha256 <hash> -o packs/pack.json
 ```
 
-`vulndb` downloads the Go vulnerability database, unpacks it next to the old copy, and only then swaps them; the previous copy is kept as `<folder>.old`. An archive with unsafe paths or no files is refused and the existing copy stays in place. `pack` only writes a pack when its SHA-256 matches the one you give. On a machine without internet, copy the folder or the pack by hand.
+`vulndb` downloads the Go vulnerability database, unpacks it next to the old copy, and only then swaps them; the previous copy is kept as `<folder>.old`. An archive with unsafe paths or no files is refused and the existing copy stays in place. `pack` only writes a pack when its SHA-256 matches the one you give. `check` only compares the date of your copy with the published one and tells you whether an update is available. To update on a schedule, call `limator-update` from Task Scheduler or cron; Limator never does this by itself. On a machine without internet, copy the folder or the pack by hand.
 
 ## Origin
 
@@ -175,3 +176,5 @@ Rules L002 to L004 work on syntax, not on types, so they can miss or over-report
 ## License
 
 Apache-2.0.
+
+See [docs/RULES.md](docs/RULES.md) for every rule, [CONTRIBUTING.md](CONTRIBUTING.md) to take part, and [SECURITY.md](SECURITY.md) to report a problem.

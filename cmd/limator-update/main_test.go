@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +93,25 @@ func TestPackNeedsTheRightHash(t *testing.T) {
 	}
 	if err := updatePack(url, digest(body), out); err != nil {
 		t.Errorf("pack with the right hash refused: %v", err)
+	}
+}
+
+func TestCheckComparesModificationTimes(t *testing.T) {
+	dir := t.TempDir()
+	url := serve(t, []byte(`{"modified":"2026-01-02T00:00:00Z"}`))
+	if msg, err := checkVulnDB(dir, url); err != nil || !strings.HasPrefix(msg, "update available: no local copy") {
+		t.Errorf("no local copy: %q %v", msg, err)
+	}
+	index := filepath.Join(dir, "index", "db.json")
+	if err := os.MkdirAll(filepath.Dir(index), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for body, want := range map[string]string{`{"modified":"2026-01-01T00:00:00Z"}`: "update available: local", `{"modified":"2026-01-02T00:00:00Z"}`: "up to date"} {
+		if err := os.WriteFile(index, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if msg, err := checkVulnDB(dir, url); err != nil || !strings.HasPrefix(msg, want) {
+			t.Errorf("%s: %q %v", want, msg, err)
+		}
 	}
 }

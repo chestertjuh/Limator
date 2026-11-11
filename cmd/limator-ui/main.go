@@ -12,13 +12,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
 type server struct {
-	dir, cfg, token, host, work string
-	mu                          sync.Mutex
-	run                         func(args ...string) (string, error)
+	dir, cfg, who, token, host, work string
+	mu                               sync.Mutex
+	run                              func(args ...string) (string, error)
 }
 
 var page = template.Must(template.New("page").Parse(`<!doctype html>
@@ -28,7 +29,7 @@ var page = template.Must(template.New("page").Parse(`<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Limator</title>
 <style>
-:root{--bg:#0d1416;--panel:#131d20;--line:#1f3a3d;--teal:#0f4c4f;--text:#e6f0f0;--dim:#9fb3b5;--warn:#7a2e22}
+:root{--bg:#0d1416;--panel:#131d20;--line:#1f3a3d;--teal:#0f4c4f;--text:#e6f0f0;--dim:#9fb3b5;--accent:#5fd4c8;--warn:#7a2e22}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}
 header{padding:16px 24px;border-bottom:1px solid var(--line)}
@@ -39,8 +40,14 @@ button{min-height:44px;padding:8px 16px;background:var(--teal);border:1px solid 
 button{color:var(--text);cursor:pointer;font:inherit}
 button.danger{background:var(--warn)}
 button:disabled{opacity:.5;cursor:wait}
-pre{margin:0 24px 12px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+pre,#panel{margin:0 24px 12px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
 pre{white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto}
+#panel:empty{display:none}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.score{min-width:48px;font-variant-numeric:tabular-nums;color:var(--accent)}
+.where{flex:1;min-width:200px;word-break:break-all}
+.dim{color:var(--dim)}
 iframe{display:block;width:100%;height:80vh;border:0;border-top:1px solid var(--line)}
 </style>
 </head>
@@ -48,30 +55,89 @@ iframe{display:block;width:100%;height:80vh;border:0;border-top:1px solid var(--
 <header><h1>Limator</h1><div class="meta">{{.Dir}}</div></header>
 <div class="bar">
 <button id="scan">Scan again</button>
+<button id="list">Reading list</button>
+<button id="audit">Audit</button>
 <button id="preview">Preview fix</button>
 <button id="fix" class="danger">Apply fix</button>
 </div>
 <pre id="out" aria-live="polite">Ready.</pre>
+<div id="panel"></div>
 <iframe id="report" title="Report" src="/report?t={{.Token}}"></iframe>
 <script>
-var token = {{.Token}}, out = document.getElementById('out'), buttons = document.querySelectorAll('button');
+var token = {{.Token}}, out = document.getElementById('out'), panel = document.getElementById('panel');
+var buttons = document.querySelectorAll('.bar button');
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
 function busy(on) { buttons.forEach(function (b) { b.disabled = on; }); }
+function url(path) { return path + '?t=' + encodeURIComponent(token); }
+function post(body) {
+  return fetch(url('/run'), {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body})
+    .then(function (r) { return r.text(); });
+}
 function run(action, question) {
   if (question && !window.confirm(question)) return;
   busy(true);
   out.textContent = 'Running ' + action + '...';
-  fetch('/run?t=' + encodeURIComponent(token), {
-    method: 'POST',
-    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-    body: 'a=' + action + (question ? '&confirm=yes' : '')
-  }).then(function (r) { return r.text(); }).then(function (text) {
+  post('a=' + action + (question ? '&confirm=yes' : '')).then(function (text) {
     out.textContent = text;
-    document.getElementById('report').src = '/report?t=' + encodeURIComponent(token) + '&n=' + Date.now();
+    document.getElementById('report').src = url('/report') + '&n=' + Date.now();
   }).catch(function (e) { out.textContent = 'Failed: ' + e; }).then(function () { busy(false); });
+}
+function load(path, render) {
+  busy(true);
+  out.textContent = 'Loading...';
+  fetch(url(path)).then(function (r) {
+    if (!r.ok) return r.text().then(function (t) { throw new Error(t); });
+    return r.json();
+  }).then(function (data) { panel.textContent = ''; render(data); out.textContent = 'Done.'; })
+    .catch(function (e) { out.textContent = 'Failed: ' + e.message; }).then(function () { busy(false); });
+}
+function readingList(units) {
+  if (!units.length) panel.append(el('div', 'dim', 'Nothing left to read.'));
+  units.forEach(function (u) {
+    var row = el('div', 'row'), mark = el('button', '', 'Mark as read');
+    row.append(el('span', 'score', u.score), el('span', 'where', u.file + ':' + u.line + '  ' + u.func),
+      el('span', 'dim', (u.sensitive || []).join(' ') + '  complexity ' + u.complexity + ', findings ' + u.findings), mark);
+    mark.onclick = function () {
+      mark.disabled = true;
+      post('a=read&file=' + encodeURIComponent(u.file) + '&fn=' + encodeURIComponent(u.func)).then(function (text) {
+        out.textContent = text;
+        row.remove();
+      });
+    };
+    panel.append(row);
+  });
+}
+function fact(name, value) {
+  var row = el('div', 'row');
+  row.append(el('span', 'where', name), el('span', '', value));
+  panel.append(row);
+}
+function auditView(a) {
+  var r = a.reading || {};
+  fact('Version', a.version);
+  fact('Files / lines', a.files + ' / ' + a.lines);
+  fact('Dependencies', a.dependencies);
+  fact('Licenses', Object.keys(a.licenses || {}).sort().map(function (k) { return k + ' ' + a.licenses[k]; }).join(', '));
+  fact('Functions read', r.functions_read + ' of ' + r.functions);
+  fact('Sensitive functions read', r.sensitive_functions_read + ' of ' + r.sensitive_functions);
+  fact('AI-written functions read', r.ai_functions_read + ' of ' + r.ai_functions);
+  (a.rules || []).forEach(function (rule) {
+    var n = (a.counts || {})[rule.id] || 0;
+    if (n) fact(rule.id + ' ' + rule.name, n);
+  });
+  fact('Exceptions', (a.exceptions || []).length);
+  fact('Hash', a.hash);
 }
 document.getElementById('scan').onclick = function () { run('scan'); };
 document.getElementById('preview').onclick = function () { run('preview'); };
 document.getElementById('fix').onclick = function () { run('fix', 'Apply the fix? This changes files on disk.'); };
+document.getElementById('list').onclick = function () { load('/readlist', readingList); };
+document.getElementById('audit').onclick = function () { load('/audit', auditView); };
 </script>
 </body>
 </html>
@@ -108,18 +174,24 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) report(w http.ResponseWriter, r *http.Request) {
-	if !s.allowed(w, r) {
-		return
+func (s *server) document(name string, cmd ...string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.allowed(w, r) {
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		file := filepath.Join(s.work, name)
+		if out, err := s.run(s.args(cmd[0], append(cmd[1:], "-o", file)...)...); err != nil {
+			http.Error(w, out+"\n"+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		http.ServeFile(w, r, file)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	file := filepath.Join(s.work, "report.html")
-	if out, err := s.run(s.args("report", "-o", file, "-f", "html")...); err != nil {
-		http.Error(w, out+"\n"+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	http.ServeFile(w, r, file)
+}
+
+func plain(v string) bool {
+	return v != "" && !strings.HasPrefix(v, "-")
 }
 
 func (s *server) action(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +214,13 @@ func (s *server) action(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		args = s.args("fix")
+	case "read":
+		file, fn := r.FormValue("file"), r.FormValue("fn")
+		if !plain(file) || !plain(fn) {
+			http.Error(w, "file and function required", http.StatusBadRequest)
+			return
+		}
+		args = s.args("read", "-who", s.who, "-f", file, "-fn", fn)
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
@@ -162,7 +241,9 @@ func (s *server) action(w http.ResponseWriter, r *http.Request) {
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.home)
-	mux.HandleFunc("/report", s.report)
+	mux.HandleFunc("/report", s.document("report.html", "report", "-f", "html"))
+	mux.HandleFunc("/readlist", s.document("readlist.json", "readlist", "-n", "50"))
+	mux.HandleFunc("/audit", s.document("audit.json", "audit"))
 	mux.HandleFunc("/run", s.action)
 	return mux
 }
@@ -193,6 +274,7 @@ func main() {
 	dir := flag.String("dir", "", "folder to scan (required)")
 	cfg := flag.String("c", "", "config file")
 	port := flag.String("port", "8765", "port on 127.0.0.1")
+	who := flag.String("who", "", "name recorded when you mark a function as read (required for marking)")
 	bin := flag.String("bin", scanner(), "path of the limator scanner")
 	flag.Parse()
 	if *dir == "" {
@@ -207,7 +289,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	s := &server{dir: *dir, cfg: *cfg, token: hex.EncodeToString(raw), host: "127.0.0.1:" + *port, work: work}
+	s := &server{dir: *dir, cfg: *cfg, who: *who, token: hex.EncodeToString(raw), host: "127.0.0.1:" + *port, work: work}
 	s.run = func(args ...string) (string, error) {
 		out, err := exec.Command(*bin, args...).CombinedOutput()
 		return string(out), err
