@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.6.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.7.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -21,6 +21,9 @@ limator fix    ./myproject
 limator inventory ./myproject -o inventory.json
 limator inventory ./myproject -o bom.json -f cyclonedx
 limator audit  ./myproject -o audit.json
+limator readlist ./myproject -n 20
+limator read   ./myproject -who alice -f internal/auth/login.go
+limator coverage ./myproject
 ```
 
 `gate` writes the baseline on the first run. After that it exits 1 when any rule count rises, and tightens the baseline when a count drops. Delete the baseline to start over after adding rules.
@@ -107,6 +110,16 @@ These run as part of every scan.
 A secret is never written to a report; a finding only names the kind and the line. Files of any size are searched; only binary files are skipped. For SEC020 set `"vuln_db"` to a folder holding an unpacked copy of the Go vulnerability database. Limator reads it from disk and never downloads it. The match is on module and version, not on whether the vulnerable code is reached, so it can over-report. If the folder is missing or empty, that is reported as H001.
 
 This is static analysis of source text. It does not replace a penetration test of a running system.
+
+## Reading list and read coverage
+
+Code can grow faster than anyone can read it. Limator does not ask you to read everything; it tells you what to read first and keeps track of what a person has read.
+
+`readlist` ranks every Go function that nobody has marked as read. The score is `3 x sensitive areas + complexity + 2 x findings`; layout findings (file-doc, file-length, line-length) are not counted. Sensitive areas are detected from the code: SQL calls, cryptography, starting processes, HTTP handlers, writing or deleting files, and names that point at authentication or tenancy. Test files are left out.
+
+`read` records that a person read a file or one function. The record stores a hash of the code tokens of each function, so a mark stays valid when only comments change and expires as soon as the code changes. Marks are kept in `.limator-read.json` in the scanned folder (or `read_file` in the config); commit that file with the code.
+
+`coverage` prints how many functions, and how many sensitive functions, currently carry a valid mark. The same numbers are part of the audit document.
 
 ## Limits
 

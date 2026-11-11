@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-const version = "0.6.0"
+const version = "0.7.0"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`
@@ -20,7 +21,10 @@ usage:
   limator gate   <dir> [-c config.json] -b baseline.json
   limator fix    <dir> [-c config.json] [-n yes]
   limator inventory <dir> [-c config.json] -o file [-f json|cyclonedx]
-  limator audit  <dir> [-c config.json] -o audit.json`)
+  limator audit  <dir> [-c config.json] -o audit.json
+  limator readlist <dir> [-c config.json] [-n 20] [-o file]
+  limator read   <dir> [-c config.json] -who name -f file [-fn function]
+  limator coverage <dir> [-c config.json]`)
 	os.Exit(2)
 }
 
@@ -40,7 +44,7 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) < 3 || (cmd != "scan" && cmd != "report" && cmd != "gate" && cmd != "fix" && cmd != "inventory" && cmd != "audit") {
+	if len(os.Args) < 3 || !strings.Contains(" scan report gate fix inventory audit readlist read coverage ", " "+cmd+" ") {
 		usage()
 	}
 	root := os.Args[2]
@@ -59,6 +63,12 @@ func main() {
 	cfg, err := loadConfig(cfgPath, opt["-c"] != "")
 	if err != nil {
 		fail(err)
+	}
+	if cmd == "read" || cmd == "coverage" {
+		if err := reading(cmd, root, cfg, opt); err != nil {
+			fail(err)
+		}
+		return
 	}
 	if cmd == "fix" {
 		if err := fixAll(root, cfg, opt["-n"] != ""); err != nil {
@@ -92,6 +102,10 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
+	case "readlist":
+		if err := readlist(root, cfg, rep, opt); err != nil {
+			fail(err)
+		}
 	case "inventory", "audit":
 		if opt["-o"] == "" {
 			usage()
@@ -102,7 +116,10 @@ func main() {
 		}
 		var doc any = inv
 		if cmd == "audit" {
-			doc, err = audit(rep, inv, cfg)
+			var all []Unit
+			if all, err = units(root, cfg, rep); err == nil {
+				doc, err = audit(rep, inv, coverage(all), cfg)
+			}
 		}
 		var out []byte
 		if err == nil && cmd == "inventory" && opt["-f"] == "cyclonedx" {

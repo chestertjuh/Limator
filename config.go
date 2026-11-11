@@ -48,6 +48,7 @@ type Config struct {
 	ModuleCache      string      `json:"module_cache"`
 	SecretExtensions []string    `json:"secret_extensions"`
 	VulnDB           string      `json:"vuln_db"`
+	ReadFile         string      `json:"read_file"`
 	comments         []*regexp.Regexp
 	sum              string
 	dir              string

@@ -400,11 +400,11 @@ func TestInventoryAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := audit(rep, inv, cfg)
+	a, err := audit(rep, inv, Coverage{}, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := audit(rep, inv, cfg)
+	b, _ := audit(rep, inv, Coverage{}, cfg)
 	if a.Hash == "" || a.Hash != b.Hash || a.ConfigSHA256 == "" || a.GoFilesNoDoc != 1 || a.Licenses["MIT"] != 1 || len(a.Controls) != 4 {
 		t.Errorf("audit: %+v", a)
 	}
@@ -474,5 +474,71 @@ func TestVersionsAndVulnerableDependencies(t *testing.T) {
 	cfg.VulnDB = filepath.Join(db, "missing")
 	if rep, err = scan(dir, cfg); err != nil || rep.Counts["H001"] != 1 {
 		t.Errorf("missing database not reported: %v %v", rep.Counts, err)
+	}
+}
+
+const handler = `package demo
+
+import (
+	"database/sql"
+	"net/http"
+)
+
+func small() int {
+	return 1
+}
+
+func listUsers(db *sql.DB, w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query("SELECT name FROM users")
+	if err != nil || rows == nil {
+		return
+	}
+	for rows.Next() {
+	}
+}
+`
+
+func TestUnitsScoreAndHash(t *testing.T) {
+	us := fileUnits("a.go", []byte(handler))
+	if len(us) != 2 || us[1].Func != "listUsers" || strings.Join(us[1].Sensitive, ",") != "http,sql" || us[1].Complexity != 4 {
+		t.Fatalf("units: %+v", us)
+	}
+	commented := strings.Replace(handler, "\trows, err", "\t// explain\n\trows, err", 1)
+	changed := strings.Replace(handler, "FROM users", "FROM admins", 1)
+	if fileUnits("a.go", []byte(commented))[1].Hash != us[1].Hash {
+		t.Error("a comment changed the hash")
+	}
+	if fileUnits("a.go", []byte(changed))[1].Hash == us[1].Hash {
+		t.Error("a code change kept the hash")
+	}
+}
+
+func TestReadMarksExpireWhenCodeChanges(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "a.go"), handler)
+	cfg, err := loadConfig(filepath.Join(dir, "limator.json"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt := map[string]string{"-who": "reviewer", "-f": "a.go", "-fn": "listUsers", "-d": "2026-01-01"}
+	if err := reading("read", dir, cfg, opt); err != nil {
+		t.Fatal(err)
+	}
+	all, err := units(dir, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := coverage(all); c.Functions != 2 || c.Read != 1 || c.Sensitive != 1 || c.SensitiveRead != 1 {
+		t.Errorf("coverage after reading: %+v", c)
+	}
+	if all[0].Func != "listUsers" {
+		t.Errorf("highest score first: %+v", all[0])
+	}
+	write(t, filepath.Join(dir, "a.go"), strings.Replace(handler, "FROM users", "FROM admins", 1))
+	if all, err = units(dir, cfg, nil); err != nil || coverage(all).Read != 0 {
+		t.Errorf("mark survived a code change: %+v %v", coverage(all), err)
+	}
+	if err := reading("read", dir, cfg, map[string]string{"-who": "x", "-f": "missing.go"}); err == nil {
+		t.Error("unknown file accepted")
 	}
 }

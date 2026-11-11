@@ -59,6 +59,7 @@ type Audit struct {
 	GoFilesNoDoc  int            `json:"go_files_without_doc"`
 	Dependencies  int            `json:"dependencies"`
 	Licenses      map[string]int `json:"licenses"`
+	Reading       Coverage       `json:"reading"`
 	Controls      []Control      `json:"controls"`
 	ReportHash    string         `json:"report_hash"`
 	InventoryHash string         `json:"inventory_hash"`
@@ -339,11 +340,11 @@ func cyclonedx(inv *Inventory) ([]byte, error) {
 	}, "", "  ")
 }
 
-func audit(rep *Report, inv *Inventory, cfg Config) (*Audit, error) {
+func audit(rep *Report, inv *Inventory, cov Coverage, cfg Config) (*Audit, error) {
 	a := &Audit{
 		Tool: "limator", Version: version, ConfigSHA256: cfg.sum, Rules: rep.Rules, Counts: rep.Counts,
 		Suppressed: rep.Suppressed, Exceptions: rep.Exceptions, Files: len(inv.Files), Dependencies: len(inv.Dependencies),
-		Licenses: map[string]int{}, Controls: controls, ReportHash: rep.Hash, InventoryHash: inv.Hash,
+		Licenses: map[string]int{}, Reading: cov, Controls: controls, ReportHash: rep.Hash, InventoryHash: inv.Hash,
 	}
 	for _, f := range inv.Files {
 		a.Lines += f.Lines
