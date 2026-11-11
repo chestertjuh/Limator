@@ -35,6 +35,9 @@ func scan(root string, cfg Config) (*Report, error) {
 	for _, im := range cfg.Imports {
 		rep.Rules = append(rep.Rules, Rule{im.ID, im.Name, "imported from " + im.File})
 	}
+	for _, l := range cfg.Laws {
+		rep.Rules = append(rep.Rules, Rule{l.ID, l.Name, l.Msg})
+	}
 	var all []Finding
 	err := walkFiles(root, cfg, func(rel, abs string, src []byte) error {
 		rep.Files++
@@ -42,6 +45,10 @@ func scan(root string, cfg Config) (*Report, error) {
 		all = append(all, checkSecrets(rel, src)...)
 		if filepath.Ext(abs) == ".go" {
 			all = append(all, checkGo(rel, src, cfg.comments)...)
+			all = append(all, checkLaws(rel, src, cfg)...)
+		}
+		if tsExt[filepath.Ext(abs)] {
+			all = append(all, checkTS(rel, src, cfg)...)
 		}
 		return nil
 	})
@@ -60,6 +67,9 @@ func scan(root string, cfg Config) (*Report, error) {
 	}
 	if cfg.VulnDB != "" {
 		all = append(all, checkVulns(root, cfg)...)
+	}
+	if cfg.CapsBaseline != "" {
+		all = append(all, checkCapabilities(root, cfg)...)
 	}
 	for _, e := range cfg.Exceptions {
 		e.Used = 0

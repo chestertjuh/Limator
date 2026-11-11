@@ -35,6 +35,10 @@ var rules = []Rule{
 	{"SEC012", "weak-crypto", "import of a weak algorithm"},
 	{"SEC013", "world-writable", "file or folder created world-writable"},
 	{"SEC020", "vulnerable-dep", "Go module version listed in the local vulnerability database"},
+	{"TS001", "ts-suppressed", "TypeScript or lint check switched off in a comment"},
+	{"TS002", "ts-any", "use of the any type"},
+	{"TS003", "ts-console", "console output left in code"},
+	{"CAP001", "new-capability", "a folder gained a capability that is not in the baseline"},
 }
 
 type Finding struct {

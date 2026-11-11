@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.8.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.9.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -142,6 +142,31 @@ limator-update pack -url https://example.org/pack.json -sha256 <hash> -o packs/p
 ```
 
 `vulndb` downloads the Go vulnerability database, unpacks it next to the old copy, and only then swaps them; the previous copy is kept as `<folder>.old`. An archive with unsafe paths or no files is refused and the existing copy stays in place. `pack` only writes a pack when its SHA-256 matches the one you give. On a machine without internet, copy the folder or the pack by hand.
+
+## Origin
+
+`origin` records who wrote a function: `ai`, `human` or `mixed`. Limator does not guess this; you declare it, per function, per file, or for everything at once with `-all yes`. Together with the read marks this answers one question for an audit: how much of the AI-written code has a person read? `coverage` and the audit document report that number.
+
+## Capabilities and laws
+
+`caps` lists per folder what its Go code can reach, judged from its imports: network, exec, sql, crypto, unsafe, cgo, reflect, syscall, plugin. Save that list and name it as `caps_baseline` in the config; from then on a folder that gains a capability is reported as CAP001. Only direct imports are looked at, not what dependencies do.
+
+Laws are project rules about structure, written as data:
+
+```json
+{"laws": [{
+  "id": "LAW001", "name": "tenant-check", "files": "*.go",
+  "handlers_must_call": ["tenantScope"],
+  "forbid_imports": ["net/http/pprof"],
+  "msg": "every HTTP handler checks the tenant"
+}]}
+```
+
+`handlers_must_call` reports every function with an `*http.Request` parameter that calls none of the named functions. `forbid_imports` reports the import.
+
+## TypeScript and JavaScript
+
+For `.ts`, `.tsx`, `.js` and `.jsx` files Limator separates code, comments and strings and reports: TS001 checks switched off in a comment (`@ts-ignore`, `eslint-disable`), TS002 the `any` type, TS003 `console.log` left in code, and L001 comments that match `comment_patterns`. This is a text-level split, not a full parser, so it can misjudge unusual syntax. For that reason `fix` does not change these files.
 
 ## Limits
 

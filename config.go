@@ -50,6 +50,9 @@ type Config struct {
 	VulnDB           string      `json:"vuln_db"`
 	ReadFile         string      `json:"read_file"`
 	Packs            []Pack      `json:"packs"`
+	OriginFile       string      `json:"origin_file"`
+	CapsBaseline     string      `json:"caps_baseline"`
+	Laws             []Law       `json:"laws"`
 	comments         []*regexp.Regexp
 	sum              string
 	dir              string
@@ -141,6 +144,25 @@ func (cfg *Config) validate() error {
 		}
 		if _, err := path.Match(e.Path, ""); err != nil && !strings.HasSuffix(e.Path, "/") {
 			return fmt.Errorf("exceptions %s: bad path glob %q", e.Rule, e.Path)
+		}
+	}
+	for i := range cfg.Laws {
+		l := &cfg.Laws[i]
+		if l.ID == "" || builtin(l.ID) || seen[l.ID] {
+			return fmt.Errorf("laws: id %q is empty, reserved or used twice", l.ID)
+		}
+		seen[l.ID] = true
+		if l.Files == "" {
+			l.Files = "*"
+		}
+		if _, err := path.Match(l.Files, ""); err != nil {
+			return fmt.Errorf("laws %s: bad files glob", l.ID)
+		}
+		if l.Name == "" {
+			l.Name = l.ID
+		}
+		if l.Msg == "" {
+			l.Msg = l.Name
 		}
 	}
 	if cfg.FixScope != "" && cfg.FixScope != "line" && cfg.FixScope != "group" {

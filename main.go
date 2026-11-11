@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const version = "0.8.0"
+const version = "0.9.0"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`
@@ -24,7 +24,9 @@ usage:
   limator audit  <dir> [-c config.json] -o audit.json
   limator readlist <dir> [-c config.json] [-n 20] [-o file]
   limator read   <dir> [-c config.json] -who name -f file [-fn function]
-  limator coverage <dir> [-c config.json]`)
+  limator coverage <dir> [-c config.json]
+  limator origin <dir> [-c config.json] -kind ai|human|mixed (-f file [-fn function] | -all yes)
+  limator caps   <dir> [-c config.json] [-o caps.json]`)
 	os.Exit(2)
 }
 
@@ -44,7 +46,7 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) < 3 || !strings.Contains(" scan report gate fix inventory audit readlist read coverage ", " "+cmd+" ") {
+	if len(os.Args) < 3 || !strings.Contains(" scan report gate fix inventory audit readlist read coverage origin caps ", " "+cmd+" ") {
 		usage()
 	}
 	root := os.Args[2]
@@ -64,7 +66,13 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	if cmd == "read" || cmd == "coverage" {
+	if cmd == "caps" {
+		if err := writeCaps(root, cfg, opt["-o"]); err != nil {
+			fail(err)
+		}
+		return
+	}
+	if cmd == "read" || cmd == "coverage" || cmd == "origin" {
 		if err := reading(cmd, root, cfg, opt); err != nil {
 			fail(err)
 		}

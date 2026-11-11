@@ -29,6 +29,7 @@ type Unit struct {
 	Findings   int      `json:"findings"`
 	Score      int      `json:"score"`
 	Read       bool     `json:"read"`
+	Origin     string   `json:"origin"`
 }
 
 type ReadMark struct {
@@ -44,6 +45,8 @@ type Coverage struct {
 	Read          int `json:"functions_read"`
 	Sensitive     int `json:"sensitive_functions"`
 	SensitiveRead int `json:"sensitive_functions_read"`
+	AI            int `json:"ai_functions"`
+	AIRead        int `json:"ai_functions_read"`
 }
 
 var authWords = []string{"auth", "login", "password", "passwd", "token", "session", "permission", "role", "tenant", "secret",
@@ -199,6 +202,10 @@ func units(root string, cfg Config, rep *Report) ([]Unit, error) {
 	if err != nil {
 		return nil, err
 	}
+	origins, err := loadOrigins(originFile(root, cfg))
+	if err != nil {
+		return nil, err
+	}
 	read := map[string]string{}
 	for _, m := range marks {
 		read[m.File+"|"+m.Func] = m.Hash
@@ -224,6 +231,7 @@ func units(root string, cfg Config, rep *Report) ([]Unit, error) {
 			}
 			u.Score = 3*len(u.Sensitive) + u.Complexity + 2*u.Findings
 			u.Read = read[rel+"|"+u.Func] == u.Hash
+			u.Origin = origins[rel+"|"+u.Func]
 			all = append(all, u)
 		}
 		return nil
@@ -249,6 +257,12 @@ func coverage(all []Unit) Coverage {
 		c.Functions++
 		if u.Read {
 			c.Read++
+		}
+		if u.Origin == "ai" {
+			c.AI++
+			if u.Read {
+				c.AIRead++
+			}
 		}
 		if len(u.Sensitive) > 0 {
 			c.Sensitive++
@@ -303,10 +317,14 @@ func reading(cmd, root string, cfg Config, opt map[string]string) error {
 	if err != nil {
 		return err
 	}
+	if cmd == "origin" {
+		return setOrigin(root, cfg, opt, all)
+	}
 	if cmd == "coverage" {
 		c := coverage(all)
 		fmt.Printf("functions read: %d of %d (%s)\n", c.Read, c.Functions, percent(c.Read, c.Functions))
 		fmt.Printf("sensitive functions read: %d of %d (%s)\n", c.SensitiveRead, c.Sensitive, percent(c.SensitiveRead, c.Sensitive))
+		fmt.Printf("functions recorded as AI-written and read: %d of %d (%s)\n", c.AIRead, c.AI, percent(c.AIRead, c.AI))
 		return nil
 	}
 	who, file, fn := opt["-who"], filepath.ToSlash(opt["-f"]), opt["-fn"]

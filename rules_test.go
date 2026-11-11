@@ -579,3 +579,79 @@ func TestSarifImport(t *testing.T) {
 		t.Errorf("broken sarif not reported: %v", c)
 	}
 }
+
+func TestOriginAndAICoverage(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "a.go"), handler)
+	cfg, err := loadConfig(filepath.Join(dir, "limator.json"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reading("origin", dir, cfg, map[string]string{"-kind": "ai", "-all": "yes"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := reading("read", dir, cfg, map[string]string{"-who": "reviewer", "-f": "a.go", "-fn": "listUsers"}); err != nil {
+		t.Fatal(err)
+	}
+	all, err := units(dir, cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := coverage(all); c.AI != 2 || c.AIRead != 1 {
+		t.Errorf("coverage: %+v", c)
+	}
+	if err := reading("origin", dir, cfg, map[string]string{"-kind": "robot", "-all": "yes"}); err == nil {
+		t.Error("unknown origin accepted")
+	}
+}
+
+func TestCapabilitiesAndBaseline(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pkg", "a.go"), "package pkg\n\nimport (\n\t_ \"net/http\"\n\t_ \"os/exec\"\n)\n")
+	write(t, filepath.Join(dir, "pkg", "b.go"), "package pkg\n\nimport _ \"crypto/sha256\"\n")
+	write(t, filepath.Join(dir, "caps.json"), `{"pkg":["crypto","network"]}`)
+	cfg, err := loadConfig(filepath.Join(dir, "limator.json"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caps, err := capabilities(dir, cfg)
+	if err != nil || strings.Join(caps["pkg"], ",") != "crypto,exec,network" {
+		t.Fatalf("capabilities: %v %v", caps, err)
+	}
+	cfg.CapsBaseline = filepath.Join(dir, "caps.json")
+	got := checkCapabilities(dir, cfg)
+	if len(got) != 1 || got[0].Rule != "CAP001" || got[0].Msg != "gained capability exec" {
+		t.Errorf("baseline check: %+v", got)
+	}
+	cfg.CapsBaseline = filepath.Join(dir, "missing.json")
+	if c := count(checkCapabilities(dir, cfg)); c["H001"] != 1 {
+		t.Errorf("missing baseline not reported: %v", c)
+	}
+}
+
+func TestLaws(t *testing.T) {
+	law := Law{ID: "LAW1", Files: "*", HandlersMustCall: []string{"tenantScope"}, ForbidImports: []string{"database/sql"}, Msg: "law"}
+	cfg := Config{Laws: []Law{law}}
+	if got := count(checkLaws("a.go", []byte(handler), cfg)); got["LAW1"] != 2 {
+		t.Errorf("import and handler should both break the law: %v", got)
+	}
+	guarded := strings.Replace(handler, "\trows, err", "\ttenantScope(r)\n\trows, err", 1)
+	if got := count(checkLaws("a.go", []byte(guarded), cfg)); got["LAW1"] != 1 {
+		t.Errorf("guarded handler still reported: %v", got)
+	}
+	cfg.Laws[0].Files = "other/*.go"
+	if got := checkLaws("a.go", []byte(handler), cfg); len(got) != 0 {
+		t.Errorf("law applied outside its files: %v", got)
+	}
+}
+
+func TestTypeScriptRules(t *testing.T) {
+	src := "// @ts-ignore\nconst a: any = 1;\nconst s = \"x: any and console.log(\";\nconsole.log(a); // TICKET-9 later\n" +
+		"const u = \"http://example.org\"; // ok\n/* eslint-disable */\n"
+	got := count(checkTS("a.ts", []byte(src), fixCfg("line")))
+	for id, want := range map[string]int{"TS001": 2, "TS002": 1, "TS003": 1, "L001": 1} {
+		if got[id] != want {
+			t.Errorf("%s: got %d, want %d", id, got[id], want)
+		}
+	}
+}
