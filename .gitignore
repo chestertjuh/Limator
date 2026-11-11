@@ -1,4 +1,6 @@
 limator.exe
+limator-ui.exe
+limator-ui
 limator
 *.exe~
 report.json

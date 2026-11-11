@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.3.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.4.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -70,6 +70,17 @@ Optional `limator.json` in the scanned folder, or pass `-c path`.
 `fix` changes Go files in place. It removes comments that match `comment_patterns` and strips invisible characters from comments. With `"fix_scope": "group"` it removes the whole comment block that contains a match; the default removes only the matching comment. `-n yes` shows what would change without writing.
 
 Every change is proven before it is written: the code tokens of the file must be identical before and after, so only comments can differ. Directives such as `//go:build` are never touched, and files that import `C` are skipped.
+
+## Web UI
+
+`limator-ui` is a separate small program for working from the browser: scan again, preview a fix, apply a fix, and read the report.
+
+```
+go build -o limator-ui ./cmd/limator-ui
+limator-ui -dir ./myproject
+```
+
+It listens on 127.0.0.1 only and prints a link with a one-time token; requests without that token are refused. It runs the scanner as a separate process, so the scanner itself stays free of network code. Applying a fix asks for confirmation first.
 
 ## Limits
 
