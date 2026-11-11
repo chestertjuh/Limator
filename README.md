@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.7.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.8.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -120,6 +120,28 @@ Code can grow faster than anyone can read it. Limator does not ask you to read e
 `read` records that a person read a file or one function. The record stores a hash of the code tokens of each function, so a mark stays valid when only comments change and expires as soon as the code changes. Marks are kept in `.limator-read.json` in the scanned folder (or `read_file` in the config); commit that file with the code.
 
 `coverage` prints how many functions, and how many sensitive functions, currently carry a valid mark. The same numbers are part of the audit document.
+
+## Rule packs and plug-ins
+
+A rule pack is a JSON file with `rules` and `comment_patterns`, shared between projects. The config names each pack with its SHA-256; a pack whose content does not match the pinned hash is refused, so a pack cannot change unnoticed.
+
+```json
+{"packs": [{"file": "packs/go-web.json", "sha256": "..."}]}
+```
+
+A plug-in is any program that writes its results to a file. Limator reads that file through `imports`: plain `file:line: message` lines, or a SARIF document when the file name ends in `.sarif`. Limator never starts the program itself.
+
+## Updates
+
+`limator-update` is a separate program and the only part that uses the network. The scanner never calls it; you run it yourself or from your own scheduler.
+
+```
+go build -o limator-update ./cmd/limator-update
+limator-update vulndb -dir ./vulndb
+limator-update pack -url https://example.org/pack.json -sha256 <hash> -o packs/pack.json
+```
+
+`vulndb` downloads the Go vulnerability database, unpacks it next to the old copy, and only then swaps them; the previous copy is kept as `<folder>.old`. An archive with unsafe paths or no files is refused and the existing copy stays in place. `pack` only writes a pack when its SHA-256 matches the one you give. On a machine without internet, copy the folder or the pack by hand.
 
 ## Limits
 

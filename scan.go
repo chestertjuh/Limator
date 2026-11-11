@@ -125,6 +125,12 @@ func importTool(dir string, im Import) []Finding {
 	if err != nil {
 		return []Finding{{"H001", im.File, 1, im.Name + ": output file missing"}}
 	}
+	if strings.HasSuffix(strings.ToLower(im.File), ".sarif") {
+		if found, ok := importSarif(raw, im); ok {
+			return found
+		}
+		return []Finding{{"H001", im.File, 1, im.Name + ": not a SARIF document"}}
+	}
 	var out []Finding
 	bad := ""
 	for _, l := range strings.Split(strings.TrimPrefix(string(raw), string(rune(0xFEFF))), "\n") {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"go/parser"
 	"go/token"
@@ -540,5 +542,40 @@ func TestReadMarksExpireWhenCodeChanges(t *testing.T) {
 	}
 	if err := reading("read", dir, cfg, map[string]string{"-who": "x", "-f": "missing.go"}); err == nil {
 		t.Error("unknown file accepted")
+	}
+}
+
+func TestRulePackIsPinned(t *testing.T) {
+	dir := t.TempDir()
+	pack := `{"rules":[{"id":"P001","pattern":"FIXME"}],"comment_patterns":["TICKET-\\d+"]}`
+	write(t, filepath.Join(dir, "pack.json"), pack)
+	sum := sha256.Sum256([]byte(pack))
+	cfg, err := writeCfg(t, dir, `{"packs":[{"file":"pack.json","sha256":"`+hex.EncodeToString(sum[:])+`"}]}`)
+	if err != nil || len(cfg.Rules) != 1 || len(cfg.comments) != 1 {
+		t.Errorf("pinned pack not loaded: %v %+v", err, cfg.Rules)
+	}
+	if _, err := writeCfg(t, dir, `{"packs":[{"file":"pack.json","sha256":"00"}]}`); err == nil {
+		t.Error("pack with a wrong pin accepted")
+	}
+	if _, err := writeCfg(t, dir, `{"packs":[{"file":"pack.json"}]}`); err == nil {
+		t.Error("pack without a pin accepted")
+	}
+}
+
+func TestSarifImport(t *testing.T) {
+	dir := t.TempDir()
+	rep := &Report{Version: version, Rules: rules, Findings: []Finding{{"L004", "a.go", 3, "call result discarded"}}}
+	raw, err := sarif(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "tool.sarif"), string(raw))
+	got := importTool(dir, Import{ID: "T001", Name: "tool", File: "tool.sarif"})
+	if len(got) != 1 || got[0].Rule != "T001" || got[0].File != "a.go" || got[0].Line != 3 || !strings.Contains(got[0].Msg, "L004") {
+		t.Errorf("sarif import: %+v", got)
+	}
+	write(t, filepath.Join(dir, "bad.sarif"), "not json")
+	if c := count(importTool(dir, Import{ID: "T001", Name: "tool", File: "bad.sarif"})); c["H001"] != 1 {
+		t.Errorf("broken sarif not reported: %v", c)
 	}
 }

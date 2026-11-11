@@ -49,6 +49,7 @@ type Config struct {
 	SecretExtensions []string    `json:"secret_extensions"`
 	VulnDB           string      `json:"vuln_db"`
 	ReadFile         string      `json:"read_file"`
+	Packs            []Pack      `json:"packs"`
 	comments         []*regexp.Regexp
 	sum              string
 	dir              string
@@ -66,6 +67,9 @@ func loadConfig(file string, required bool) (Config, error) {
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return cfg, fmt.Errorf("%s: %w", file, err)
 		}
+	}
+	if err := cfg.loadPacks(); err != nil {
+		return cfg, err
 	}
 	if cfg.MaxFileLines == 0 {
 		cfg.MaxFileLines = 1000
