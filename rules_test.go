@@ -329,3 +329,83 @@ func TestHTMLReportIsSelfContained(t *testing.T) {
 		t.Error("findings are missing from the page")
 	}
 }
+
+func TestParseGoMod(t *testing.T) {
+	src := "module demo\n\ngo 1.22\n\nrequire example.com/one v1.0.0\n\nrequire (\n\texample.com/two v2.1.0\n" +
+		"\texample.com/three v0.3.0 // indirect\n)\n\nreplace (\n\texample.com/two => ../two\n)\n"
+	got := parseGoMod([]byte(src))
+	if len(got) != 3 || got[0].Name != "example.com/one" || got[1].Version != "v2.1.0" || !got[2].Indirect || got[1].Indirect {
+		t.Errorf("unexpected: %+v", got)
+	}
+}
+
+func TestClassify(t *testing.T) {
+	for text, want := range map[string]string{
+		"Permission is hereby granted, free of charge, to any person":            "MIT",
+		"Apache License\nVersion 2.0, January 2004":                              "Apache-2.0",
+		"Redistribution and use in source and binary forms. Neither the name of": "BSD-3-Clause",
+		"GNU GENERAL PUBLIC LICENSE Version 3":                                   "GPL-3.0",
+		"all rights reserved":                                                    "unknown",
+	} {
+		if got := classify(text); got != want {
+			t.Errorf("%q: got %s, want %s", text, got, want)
+		}
+	}
+}
+
+func write(t *testing.T, file, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInventoryAndAudit(t *testing.T) {
+	dir, cache := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(dir, "a.go"), clean)
+	write(t, filepath.Join(dir, "b.go"), dirty)
+	write(t, filepath.Join(dir, "go.mod"), "module demo\n\nrequire example.com/Lib v1.0.0\n")
+	write(t, filepath.Join(cache, "example.com", "!lib@v1.0.0", "LICENSE"), "Permission is hereby granted, free of charge")
+	write(t, filepath.Join(dir, "web", "package.json"), `{"dependencies":{"left":"^1.0.0"}}`)
+	write(t, filepath.Join(dir, "web", "node_modules", "left", "package.json"), `{"version":"1.2.3","license":"ISC"}`)
+	cfg, err := writeCfg(t, dir, `{"module_cache":"`+filepath.ToSlash(cache)+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := inventory(dir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inv.Files) != 2 || inv.Files[0].Doc != "Package demo loads names." || inv.Files[1].Doc != "" {
+		t.Errorf("files: %+v", inv.Files)
+	}
+	if len(inv.Dependencies) != 2 || inv.Dependencies[0].License != "MIT" {
+		t.Fatalf("dependencies: %+v", inv.Dependencies)
+	}
+	if d := inv.Dependencies[1]; d.Name != "left" || d.Version != "1.2.3" || d.License != "ISC" || d.Manifest != "web/package.json" {
+		t.Errorf("npm dependency: %+v", d)
+	}
+	again, err := inventory(dir, cfg)
+	if err != nil || again.Hash != inv.Hash || inv.Hash == "" {
+		t.Errorf("inventory hash not stable")
+	}
+	bom, err := cyclonedx(inv)
+	if err != nil || !strings.Contains(string(bom), `"pkg:golang/example.com/Lib@v1.0.0"`) || !strings.Contains(string(bom), `"pkg:npm/left@1.2.3"`) {
+		t.Errorf("cyclonedx: %s", bom)
+	}
+	rep, err := scan(dir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := audit(rep, inv, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := audit(rep, inv, cfg)
+	if a.Hash == "" || a.Hash != b.Hash || a.ConfigSHA256 == "" || a.GoFilesNoDoc != 1 || a.Licenses["MIT"] != 1 || len(a.Controls) != 4 {
+		t.Errorf("audit: %+v", a)
+	}
+}

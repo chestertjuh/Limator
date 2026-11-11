@@ -7,41 +7,10 @@ import (
 	"go/parser"
 	"go/scanner"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
-
-func walkFiles(root string, cfg Config, fn func(rel, abs string, src []byte) error) error {
-	wanted := map[string]bool{}
-	for _, e := range cfg.Extensions {
-		wanted[e] = true
-	}
-	return filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if p != root && matchAny(cfg.SkipDirs, d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !wanted[filepath.Ext(p)] {
-			return nil
-		}
-		src, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		return fn(filepath.ToSlash(rel), p, src)
-	})
-}
 
 func tokens(src []byte) ([]string, error) {
 	fset := token.NewFileSet()

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,7 +45,9 @@ type Config struct {
 	Exceptions      []Exception `json:"exceptions"`
 	Imports         []Import    `json:"imports"`
 	FixScope        string      `json:"fix_scope"`
+	ModuleCache     string      `json:"module_cache"`
 	comments        []*regexp.Regexp
+	sum             string
 	dir             string
 }
 
@@ -54,6 +58,8 @@ func loadConfig(file string, required bool) (Config, error) {
 		return cfg, err
 	}
 	if err == nil {
+		sum := sha256.Sum256(raw)
+		cfg.sum = hex.EncodeToString(sum[:])
 		if err := json.Unmarshal(raw, &cfg); err != nil {
 			return cfg, fmt.Errorf("%s: %w", file, err)
 		}

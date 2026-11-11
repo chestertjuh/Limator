@@ -130,17 +130,7 @@ func checkGo(rel string, src []byte, pats []*regexp.Regexp) []Finding {
 }
 
 func hasFileDoc(f *ast.File) bool {
-	limit := f.End()
-	if len(f.Decls) > 0 {
-		limit = f.Decls[0].Pos()
-	}
-	for _, cg := range f.Comments {
-		t := cg.List[0].Text
-		if cg.Pos() < limit && !strings.HasPrefix(t, "//go:") && !strings.HasPrefix(t, "// +build") {
-			return true
-		}
-	}
-	return false
+	return docGroup(f) != nil
 }
 
 func isNil(e ast.Expr) bool {

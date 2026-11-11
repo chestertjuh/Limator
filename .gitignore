@@ -7,3 +7,6 @@ report.json
 report.sarif
 report.html
 baseline.json
+inventory.json
+bom.json
+audit.json

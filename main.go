@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-const version = "0.4.0"
+const version = "0.5.0"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`
@@ -18,7 +18,9 @@ usage:
   limator scan   <dir> [-c config.json]
   limator report <dir> [-c config.json] -o file [-f json|sarif|html]
   limator gate   <dir> [-c config.json] -b baseline.json
-  limator fix    <dir> [-c config.json] [-n yes]`)
+  limator fix    <dir> [-c config.json] [-n yes]
+  limator inventory <dir> [-c config.json] -o file [-f json|cyclonedx]
+  limator audit  <dir> [-c config.json] -o audit.json`)
 	os.Exit(2)
 }
 
@@ -38,7 +40,7 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) < 3 || (cmd != "scan" && cmd != "report" && cmd != "gate" && cmd != "fix") {
+	if len(os.Args) < 3 || (cmd != "scan" && cmd != "report" && cmd != "gate" && cmd != "fix" && cmd != "inventory" && cmd != "audit") {
 		usage()
 	}
 	root := os.Args[2]
@@ -90,6 +92,31 @@ func main() {
 		if err != nil {
 			fail(err)
 		}
+	case "inventory", "audit":
+		if opt["-o"] == "" {
+			usage()
+		}
+		inv, err := inventory(root, cfg)
+		if err != nil {
+			fail(err)
+		}
+		var doc any = inv
+		if cmd == "audit" {
+			doc, err = audit(rep, inv, cfg)
+		}
+		var out []byte
+		if err == nil && cmd == "inventory" && opt["-f"] == "cyclonedx" {
+			out, err = cyclonedx(inv)
+		} else if err == nil {
+			out, err = json.MarshalIndent(doc, "", "  ")
+		}
+		if err == nil {
+			err = os.WriteFile(opt["-o"], append(out, '\n'), 0o644)
+		}
+		if err != nil {
+			fail(err)
+		}
+		fmt.Printf("%s: %d files, %d dependencies -> %s\n", cmd, len(inv.Files), len(inv.Dependencies), opt["-o"])
 	case "gate":
 		if opt["-b"] == "" {
 			usage()

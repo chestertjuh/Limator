@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.4.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.5.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -18,6 +18,9 @@ limator report ./myproject -o report.html -f html
 limator gate   ./myproject -b baseline.json
 limator fix    ./myproject -n yes
 limator fix    ./myproject
+limator inventory ./myproject -o inventory.json
+limator inventory ./myproject -o bom.json -f cyclonedx
+limator audit  ./myproject -o audit.json
 ```
 
 `gate` writes the baseline on the first run. After that it exits 1 when any rule count rises, and tightens the baseline when a count drops. Delete the baseline to start over after adding rules.
@@ -81,6 +84,12 @@ limator-ui -dir ./myproject
 ```
 
 It listens on 127.0.0.1 only and prints a link with a one-time token; requests without that token are refused. It runs the scanner as a separate process, so the scanner itself stays free of network code. Applying a fix asks for confirmation first.
+
+## Inventory and audit
+
+`inventory` writes a register of every scanned file (path, line count, SHA-256, and the leading comment of Go files) and of every dependency found in `go.mod` and `package.json` files, with the license where it can be read locally. Go licenses are read from `vendor` or the module cache, npm licenses from `node_modules`. Nothing is downloaded; what cannot be read locally is listed as `unknown`. `-f cyclonedx` writes the dependencies as a CycloneDX 1.5 document.
+
+`audit` writes one document for a revision: tool version, the SHA-256 of the config, the count per rule, every exception with its reason, the inventory totals, the licenses in use, and a hash over all of it. The same input gives the same document. It also lists which ISO/IEC 27001:2022 controls this evidence can support. It is evidence for an audit, not a statement of compliance.
 
 ## Limits
 
