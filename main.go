@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`
@@ -17,7 +17,8 @@ usage:
   limator rules
   limator scan   <dir> [-c config.json]
   limator report <dir> [-c config.json] -o file [-f json|sarif]
-  limator gate   <dir> [-c config.json] -b baseline.json`)
+  limator gate   <dir> [-c config.json] -b baseline.json
+  limator fix    <dir> [-c config.json] [-n yes]`)
 	os.Exit(2)
 }
 
@@ -37,7 +38,7 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) < 3 || (cmd != "scan" && cmd != "report" && cmd != "gate") {
+	if len(os.Args) < 3 || (cmd != "scan" && cmd != "report" && cmd != "gate" && cmd != "fix") {
 		usage()
 	}
 	root := os.Args[2]
@@ -56,6 +57,11 @@ func main() {
 	cfg, err := loadConfig(cfgPath, opt["-c"] != "")
 	if err != nil {
 		fail(err)
+	}
+	if cmd == "fix" {
+		if err := fixAll(root, cfg, opt["-n"] != ""); err != nil {
+			fail(err)
+		}
 	}
 	rep, err := scan(root, cfg)
 	if err != nil {

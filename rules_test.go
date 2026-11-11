@@ -15,7 +15,7 @@ const dirty = `package demo
 
 import "database/sql"
 
-// ronde 17 moved this
+// TICKET-17 moved this
 func load(db *sql.DB) []string {
 	var out []string
 	rows, _ := db.Query("SELECT a")
@@ -63,7 +63,7 @@ func count(fs []Finding) map[string]int {
 }
 
 func TestDirtyGo(t *testing.T) {
-	pats := []*regexp.Regexp{regexp.MustCompile(`ronde \d+`)}
+	pats := []*regexp.Regexp{regexp.MustCompile(`TICKET-\d+`)}
 	got := count(checkGo("a.go", []byte(dirty), pats))
 	for _, id := range []string{"L001", "L002", "L003", "L004", "L006"} {
 		if got[id] != 1 {
@@ -73,7 +73,7 @@ func TestDirtyGo(t *testing.T) {
 }
 
 func TestCleanGo(t *testing.T) {
-	pats := []*regexp.Regexp{regexp.MustCompile(`ronde \d+`)}
+	pats := []*regexp.Regexp{regexp.MustCompile(`TICKET-\d+`)}
 	if got := checkGo("a.go", []byte(clean), pats); len(got) != 0 {
 		t.Errorf("clean file has findings: %v", got)
 	}
@@ -260,5 +260,53 @@ func TestSarif(t *testing.T) {
 	}
 	if doc.Version != "2.1.0" || len(doc.Runs) != 1 || len(doc.Runs[0].Results) != 1 || doc.Runs[0].Results[0].RuleID != "L004" {
 		t.Errorf("unexpected sarif: %s", raw)
+	}
+}
+
+func fixCfg(scope string) Config {
+	return Config{FixScope: scope, comments: []*regexp.Regexp{regexp.MustCompile(`TICKET-\d+`)}}
+}
+
+func TestFixRemovesMatchingComments(t *testing.T) {
+	src := "package demo\n\n//go:generate echo TICKET-1\n\n// keeps this line\n// TICKET-17 moved this\n" +
+		"func a() int {\n\tx := 1 // TICKET-18 temp\n\treturn x\n}\n"
+	out, removed, _, err := fixGo([]byte(src), fixCfg("line"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if removed != 2 || strings.Contains(got, "TICKET-17") || strings.Contains(got, "TICKET-18") {
+		t.Errorf("removed %d:\n%s", removed, got)
+	}
+	if !strings.Contains(got, "keeps this line") || !strings.Contains(got, "//go:generate echo TICKET-1") || !strings.Contains(got, "x := 1\n") {
+		t.Errorf("lost something:\n%s", got)
+	}
+	out, _, _, err = fixGo([]byte(src), fixCfg("group"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "keeps this line") {
+		t.Errorf("group scope kept the group:\n%s", out)
+	}
+}
+
+func TestFixCleansInvisibleOnlyInComments(t *testing.T) {
+	zw := string(rune(0x200B))
+	src := "package demo\n\n// hid" + zw + "den\nvar s = \"a" + zw + "b\"\n"
+	out, _, cleaned, err := fixGo([]byte(src), fixCfg("line"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleaned != 1 || !strings.Contains(string(out), "// hidden") || !strings.Contains(string(out), "a"+zw+"b") {
+		t.Errorf("cleaned %d: %q", cleaned, out)
+	}
+}
+
+func TestSameCode(t *testing.T) {
+	if !sameCode([]byte("package a\n// c\nvar x = 1\n"), []byte("package a\nvar x = 1\n")) {
+		t.Error("comment-only change rejected")
+	}
+	if sameCode([]byte("package a\nvar x = 1\n"), []byte("package a\nvar x = 2\n")) {
+		t.Error("code change accepted")
 	}
 }

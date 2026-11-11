@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.2.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON and SARIF reports. Every rule has a test.
+Status: 0.3.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON and SARIF reports. Every rule has a test.
 
 ## Use
 
@@ -15,6 +15,8 @@ limator scan   ./myproject
 limator report ./myproject -o report.json
 limator report ./myproject -o report.sarif -f sarif
 limator gate   ./myproject -b baseline.json
+limator fix    ./myproject -n yes
+limator fix    ./myproject
 ```
 
 `gate` writes the baseline on the first run. After that it exits 1 when any rule count rises, and tightens the baseline when a count drops. Delete the baseline to start over after adding rules.
@@ -61,6 +63,12 @@ Optional `limator.json` in the scanned folder, or pass `-c path`.
 - `rules` are your own rules as data: a regular expression checked per line, for files whose name matches `files`.
 - `exceptions` need a reason. A path ending in `/` matches a folder; otherwise it is a glob on the path or the file name. An exception that matches nothing is reported as H002.
 - `imports` read the saved text output of another tool (`file:line: message` lines, path relative to the config). Limator does not run other programs. If the output is missing or shows a crash, that is reported as H001 and never silently ignored.
+
+## Fix
+
+`fix` changes Go files in place. It removes comments that match `comment_patterns` and strips invisible characters from comments. With `"fix_scope": "group"` it removes the whole comment block that contains a match; the default removes only the matching comment. `-n yes` shows what would change without writing.
+
+Every change is proven before it is written: the code tokens of the file must be identical before and after, so only comments can differ. Directives such as `//go:build` are never touched, and files that import `C` are skipped.
 
 ## Limits
 

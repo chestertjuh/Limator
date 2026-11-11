@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,7 +26,8 @@ type Report struct {
 }
 
 func scan(root string, cfg Config) (*Report, error) {
-	rep := &Report{Tool: "limator", Version: version, Counts: map[string]int{}, Suppressed: map[string]int{}, Findings: []Finding{}, Exceptions: []Exception{}}
+	rep := &Report{Tool: "limator", Version: version, Findings: []Finding{}, Exceptions: []Exception{}}
+	rep.Counts, rep.Suppressed = map[string]int{}, map[string]int{}
 	rep.Rules = append(rep.Rules, rules...)
 	for _, r := range cfg.Rules {
 		rep.Rules = append(rep.Rules, Rule{r.ID, r.Name, r.Msg})
@@ -35,37 +35,11 @@ func scan(root string, cfg Config) (*Report, error) {
 	for _, im := range cfg.Imports {
 		rep.Rules = append(rep.Rules, Rule{im.ID, im.Name, "imported from " + im.File})
 	}
-	wanted := map[string]bool{}
-	for _, e := range cfg.Extensions {
-		wanted[e] = true
-	}
 	var all []Finding
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if p != root && matchAny(cfg.SkipDirs, d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		ext := filepath.Ext(p)
-		if !wanted[ext] {
-			return nil
-		}
-		src, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
+	err := walkFiles(root, cfg, func(rel, abs string, src []byte) error {
 		rep.Files++
 		all = append(all, checkText(rel, src, cfg)...)
-		if ext == ".go" {
+		if filepath.Ext(abs) == ".go" {
 			all = append(all, checkGo(rel, src, cfg.comments)...)
 		}
 		return nil

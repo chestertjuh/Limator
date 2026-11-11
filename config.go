@@ -42,6 +42,7 @@ type Config struct {
 	Rules           []DataRule  `json:"rules"`
 	Exceptions      []Exception `json:"exceptions"`
 	Imports         []Import    `json:"imports"`
+	FixScope        string      `json:"fix_scope"`
 	comments        []*regexp.Regexp
 	dir             string
 }
@@ -125,6 +126,9 @@ func (cfg *Config) validate() error {
 		if _, err := path.Match(e.Path, ""); err != nil && !strings.HasSuffix(e.Path, "/") {
 			return fmt.Errorf("exceptions %s: bad path glob %q", e.Rule, e.Path)
 		}
+	}
+	if cfg.FixScope != "" && cfg.FixScope != "line" && cfg.FixScope != "group" {
+		return fmt.Errorf("fix_scope must be line or group")
 	}
 	return nil
 }
