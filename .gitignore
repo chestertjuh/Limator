@@ -1,7 +1,7 @@
-limator.exe
-limator-ui.exe
-limator-ui
-limator
+/limator.exe
+/limator-ui.exe
+/limator
+/limator-ui
 *.exe~
 report.json
 report.sarif
