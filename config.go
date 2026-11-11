@@ -36,19 +36,21 @@ type Import struct {
 }
 
 type Config struct {
-	CommentPatterns []string    `json:"comment_patterns"`
-	MaxFileLines    int         `json:"max_file_lines"`
-	MaxLineLength   int         `json:"max_line_length"`
-	SkipDirs        []string    `json:"skip_dirs"`
-	Extensions      []string    `json:"extensions"`
-	Rules           []DataRule  `json:"rules"`
-	Exceptions      []Exception `json:"exceptions"`
-	Imports         []Import    `json:"imports"`
-	FixScope        string      `json:"fix_scope"`
-	ModuleCache     string      `json:"module_cache"`
-	comments        []*regexp.Regexp
-	sum             string
-	dir             string
+	CommentPatterns  []string    `json:"comment_patterns"`
+	MaxFileLines     int         `json:"max_file_lines"`
+	MaxLineLength    int         `json:"max_line_length"`
+	SkipDirs         []string    `json:"skip_dirs"`
+	Extensions       []string    `json:"extensions"`
+	Rules            []DataRule  `json:"rules"`
+	Exceptions       []Exception `json:"exceptions"`
+	Imports          []Import    `json:"imports"`
+	FixScope         string      `json:"fix_scope"`
+	ModuleCache      string      `json:"module_cache"`
+	SecretExtensions []string    `json:"secret_extensions"`
+	VulnDB           string      `json:"vuln_db"`
+	comments         []*regexp.Regexp
+	sum              string
+	dir              string
 }
 
 func loadConfig(file string, required bool) (Config, error) {
@@ -72,6 +74,9 @@ func loadConfig(file string, required bool) (Config, error) {
 	}
 	if cfg.SkipDirs == nil {
 		cfg.SkipDirs = []string{"vendor", "node_modules", ".git", ".next", "dist", "build", "out"}
+	}
+	if cfg.SecretExtensions == nil {
+		cfg.SecretExtensions = []string{".json", ".yml", ".yaml", ".toml", ".ini", ".conf", ".ps1", ".sh"}
 	}
 	if cfg.Extensions == nil {
 		cfg.Extensions = []string{".go", ".ts", ".tsx"}

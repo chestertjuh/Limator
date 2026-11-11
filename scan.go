@@ -39,6 +39,7 @@ func scan(root string, cfg Config) (*Report, error) {
 	err := walkFiles(root, cfg, func(rel, abs string, src []byte) error {
 		rep.Files++
 		all = append(all, checkText(rel, src, cfg)...)
+		all = append(all, checkSecrets(rel, src)...)
 		if filepath.Ext(abs) == ".go" {
 			all = append(all, checkGo(rel, src, cfg.comments)...)
 		}
@@ -49,6 +50,16 @@ func scan(root string, cfg Config) (*Report, error) {
 	}
 	for _, im := range cfg.Imports {
 		all = append(all, importTool(cfg.dir, im)...)
+	}
+	err = walkTree(root, cfg, func(name string) bool { return secretFile(name, cfg) }, func(rel, abs string, src []byte) error {
+		all = append(all, checkSecrets(rel, src)...)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if cfg.VulnDB != "" {
+		all = append(all, checkVulns(root, cfg)...)
 	}
 	for _, e := range cfg.Exceptions {
 		e.Used = 0

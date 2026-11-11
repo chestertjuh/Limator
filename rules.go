@@ -29,6 +29,12 @@ var rules = []Rule{
 	{"L006", "file-doc", "Go file has no leading comment saying what it is for"},
 	{"L007", "file-length", "file longer than max_file_lines"},
 	{"L008", "line-length", "line longer than max_line_length"},
+	{"SEC001", "secret", "possible secret or key in a file"},
+	{"SEC010", "sql-format", "SQL text built with formatting or concatenation"},
+	{"SEC011", "tls-skip-verify", "TLS certificate check switched off"},
+	{"SEC012", "weak-crypto", "import of a weak algorithm"},
+	{"SEC013", "world-writable", "file or folder created world-writable"},
+	{"SEC020", "vulnerable-dep", "Go module version listed in the local vulnerability database"},
 }
 
 type Finding struct {
@@ -105,6 +111,7 @@ func checkGo(rel string, src []byte, pats []*regexp.Regexp) []Finding {
 	if !hasFileDoc(f) {
 		add("L006", f.Package, "no leading file comment")
 	}
+	checkSecurity(f, add)
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.BinaryExpr:

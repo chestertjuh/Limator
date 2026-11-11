@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.5.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.6.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -90,6 +90,23 @@ It listens on 127.0.0.1 only and prints a link with a one-time token; requests w
 `inventory` writes a register of every scanned file (path, line count, SHA-256, and the leading comment of Go files) and of every dependency found in `go.mod` and `package.json` files, with the license where it can be read locally. Go licenses are read from `vendor` or the module cache, npm licenses from `node_modules`. Nothing is downloaded; what cannot be read locally is listed as `unknown`. `-f cyclonedx` writes the dependencies as a CycloneDX 1.5 document.
 
 `audit` writes one document for a revision: tool version, the SHA-256 of the config, the count per rule, every exception with its reason, the inventory totals, the licenses in use, and a hash over all of it. The same input gives the same document. It also lists which ISO/IEC 27001:2022 controls this evidence can support. It is evidence for an audit, not a statement of compliance.
+
+## Security checks
+
+These run as part of every scan.
+
+| ID | Name | What it finds |
+|---|---|---|
+| SEC001 | secret | private keys, access keys, tokens and hard-coded passwords, in code and in config files such as `.env`, `.json` and `.yml` |
+| SEC010 | sql-format | SQL text built with `fmt.Sprintf` or string concatenation and passed to `Query` or `Exec` |
+| SEC011 | tls-skip-verify | `InsecureSkipVerify: true` |
+| SEC012 | weak-crypto | import of `crypto/md5`, `crypto/sha1`, `crypto/des` or `crypto/rc4` |
+| SEC013 | world-writable | files or folders created with a world-writable mode |
+| SEC020 | vulnerable-dep | a Go module version listed in a local copy of the Go vulnerability database |
+
+A secret is never written to a report; a finding only names the kind and the line. Files larger than 2 MB and lines longer than 4000 characters are not searched for secrets. For SEC020 set `"vuln_db"` to a folder holding an unpacked copy of the Go vulnerability database. Limator reads it from disk and never downloads it. The match is on module and version, not on whether the vulnerable code is reached, so it can over-report. If the folder is missing or empty, that is reported as H001.
+
+This is static analysis of source text. It does not replace a penetration test of a running system.
 
 ## Limits
 

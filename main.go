@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`

@@ -409,3 +409,70 @@ func TestInventoryAndAudit(t *testing.T) {
 		t.Errorf("audit: %+v", a)
 	}
 }
+
+func TestSecretsAreFoundAndNeverPrinted(t *testing.T) {
+	token := "gh" + "p_" + strings.Repeat("a1", 18)
+	key := "AK" + "IA" + strings.Repeat("Q", 16)
+	pem := "-----BEGIN RSA PRIV" + "ATE KEY-----"
+	src := "a := \"" + token + "\"\nk = " + key + "\n" + pem + "\npass" + "word = \"s3cretValue1234567\"\n" +
+		"pass" + "word: \"your-password-here-1\"\nname = \"hello-world-0123456789\"\n"
+	got := checkSecrets("a.env", []byte(src))
+	if len(got) != 4 {
+		t.Fatalf("got %d findings: %+v", len(got), got)
+	}
+	for _, f := range got {
+		if f.Rule != "SEC001" || strings.Contains(f.Msg, token) || strings.Contains(f.Msg, "s3cret") || strings.Contains(f.Msg, key) {
+			t.Errorf("finding leaks or is mislabeled: %+v", f)
+		}
+	}
+	if len(checkSecrets("a.bin", []byte("pass"+"word = \"s3cretValue1234567\"\x00"))) != 0 {
+		t.Error("binary content was scanned")
+	}
+}
+
+func TestGoSecurityRules(t *testing.T) {
+	src := "package demo\n\nimport (\n\t\"crypto/md5\"\n\t\"crypto/tls\"\n\t\"database/sql\"\n\t\"fmt\"\n\t\"os\"\n)\n\n" +
+		"func f(db *sql.DB, t string) {\n\t_ = md5.New()\n\t_ = &tls.Config{InsecureSkipVerify: true}\n" +
+		"\tdb.Query(fmt.Sprintf(\"SELECT * FROM %s\", t))\n\tdb.Exec(\"DELETE FROM a WHERE b = \" + t)\n" +
+		"\tdb.Query(\"SELECT 1\" + \" FROM a\")\n\tos.WriteFile(\"x\", nil, 0o666)\n\tos.WriteFile(\"y\", nil, 0o644)\n}\n"
+	got := count(checkGo("a.go", []byte(src), nil))
+	for id, want := range map[string]int{"SEC010": 2, "SEC011": 1, "SEC012": 1, "SEC013": 1} {
+		if got[id] != want {
+			t.Errorf("%s: got %d, want %d", id, got[id], want)
+		}
+	}
+}
+
+func TestVersionsAndVulnerableDependencies(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want int
+	}{{"v1.2.0", "1.10.0", -1}, {"v1.2.0", "1.2.0", 0}, {"v1.2.0-rc1", "1.2.0", -1}, {"v2.0.0", "1.9.9", 1}} {
+		if got := cmpVersion(c.a, c.b); got != c.want {
+			t.Errorf("cmpVersion(%s, %s) = %d, want %d", c.a, c.b, got, c.want)
+		}
+	}
+	dir, db := t.TempDir(), t.TempDir()
+	write(t, filepath.Join(db, "ID", "GO-2020-0001.json"), `{"id":"GO-2020-0001","affected":[{"package":{"name":"example.com/lib",
+		"ecosystem":"Go"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.2.0"}]}]}]}`)
+	write(t, filepath.Join(dir, "go.mod"), "module demo\n\nrequire (\n\texample.com/lib v1.1.0\n\texample.com/ok v1.0.0\n)\n")
+	cfg, err := writeCfg(t, dir, `{"vuln_db":"`+filepath.ToSlash(db)+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := scan(dir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Counts["SEC020"] != 1 || rep.Counts["H001"] != 0 {
+		t.Errorf("counts: %v", rep.Counts)
+	}
+	write(t, filepath.Join(dir, "go.mod"), "module demo\n\nrequire example.com/lib v1.2.0\n")
+	if rep, err = scan(dir, cfg); err != nil || rep.Counts["SEC020"] != 0 {
+		t.Errorf("fixed version still reported: %v %v", rep.Counts, err)
+	}
+	cfg.VulnDB = filepath.Join(db, "missing")
+	if rep, err = scan(dir, cfg); err != nil || rep.Counts["H001"] != 1 {
+		t.Errorf("missing database not reported: %v %v", rep.Counts, err)
+	}
+}
