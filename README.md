@@ -104,7 +104,7 @@ These run as part of every scan.
 | SEC013 | world-writable | files or folders created with a world-writable mode |
 | SEC020 | vulnerable-dep | a Go module version listed in a local copy of the Go vulnerability database |
 
-A secret is never written to a report; a finding only names the kind and the line. Files larger than 2 MB and lines longer than 4000 characters are not searched for secrets. For SEC020 set `"vuln_db"` to a folder holding an unpacked copy of the Go vulnerability database. Limator reads it from disk and never downloads it. The match is on module and version, not on whether the vulnerable code is reached, so it can over-report. If the folder is missing or empty, that is reported as H001.
+A secret is never written to a report; a finding only names the kind and the line. Files of any size are searched; only binary files are skipped. For SEC020 set `"vuln_db"` to a folder holding an unpacked copy of the Go vulnerability database. Limator reads it from disk and never downloads it. The match is on module and version, not on whether the vulnerable code is reached, so it can over-report. If the folder is missing or empty, that is reported as H001.
 
 This is static analysis of source text. It does not replace a penetration test of a running system.
 

@@ -28,6 +28,8 @@ var secretKinds = []struct {
 var assigned = regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key|private[_-]?key)\b["']?\s*[:=]\s*` +
 	`["']([A-Za-z0-9+/_=.-]{16,})["']`)
 
+var hint = regexp.MustCompile(`(?i)-----BEGIN|AKIA|gh[pousr]_|github_pat_|xox[baprs]-|eyJ|passw|secret|token|api[_-]?key|private[_-]?key`)
+
 func plausible(v string) bool {
 	low := strings.ToLower(v)
 	for _, w := range []string{"example", "changeme", "placeholder", "xxxx", "your", "test", "dummy", "sample"} {
@@ -39,12 +41,12 @@ func plausible(v string) bool {
 }
 
 func checkSecrets(rel string, src []byte) []Finding {
-	if len(src) > 2<<20 || bytes.IndexByte(src, 0) >= 0 {
+	if bytes.IndexByte(src, 0) >= 0 || !hint.Match(src) {
 		return nil
 	}
 	var out []Finding
 	for i, l := range strings.Split(string(src), "\n") {
-		if len(l) > 4000 {
+		if !hint.MatchString(l) {
 			continue
 		}
 		kind := ""
