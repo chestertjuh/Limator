@@ -655,3 +655,29 @@ func TestTypeScriptRules(t *testing.T) {
 		}
 	}
 }
+
+func TestFixSmart(t *testing.T) {
+	src := "package p\n\n// Add adds two numbers (TICKET-12).\n// TICKET-13: it never overflows\n// because of TICKET-14 here.\nfunc Add(a, b int) int {\n\t// TICKET-15\n\treturn a + b // TICKET-16\n}\n"
+	want := "package p\n\n// Add adds two numbers.\n// It never overflows\n// because of TICKET-14 here.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
+	res, err := fixFile([]byte(src), fixCfg("smart"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(res.out) != want {
+		t.Fatalf("got:\n%s", res.out)
+	}
+	if res.removed != 2 || res.cleaned != 2 || res.review != 1 {
+		t.Fatalf("removed %d, cleaned %d, review %d", res.removed, res.cleaned, res.review)
+	}
+}
+
+func TestFixSmartKeepsBrokenSentence(t *testing.T) {
+	src := "package p\n\n// See the note in\n// TICKET-7.\nvar X = 1\n"
+	res, err := fixFile([]byte(src), fixCfg("smart"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(res.out) != src || res.review != 1 {
+		t.Fatalf("review %d, got:\n%s", res.review, res.out)
+	}
+}

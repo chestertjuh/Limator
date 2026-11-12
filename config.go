@@ -165,8 +165,8 @@ func (cfg *Config) validate() error {
 			l.Msg = l.Name
 		}
 	}
-	if cfg.FixScope != "" && cfg.FixScope != "line" && cfg.FixScope != "group" {
-		return fmt.Errorf("fix_scope must be line or group")
+	if cfg.FixScope != "" && cfg.FixScope != "line" && cfg.FixScope != "group" && cfg.FixScope != "smart" {
+		return fmt.Errorf("fix_scope must be line, group or smart")
 	}
 	return nil
 }

@@ -9,7 +9,26 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+const (
+	leave = iota
+	rewrite
+	remove
+)
+
+type fixResult struct {
+	out                      []byte
+	removed, cleaned, review int
+}
+
+var (
+	parenRe = regexp.MustCompile(`\s*\([^()]*\)`)
+	leadSep = regexp.MustCompile(`^\s*[:\-\x{2013}\x{2014}]\s+`)
 )
 
 func tokens(src []byte) ([]string, error) {
@@ -67,21 +86,93 @@ func directive(text string) bool {
 	return false
 }
 
+func hasWord(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) >= 0
+}
+
+func upperFirst(s string) string {
+	r, n := utf8.DecodeRuneInString(s)
+	if n == 0 {
+		return s
+	}
+	return string(unicode.ToUpper(r)) + s[n:]
+}
+
+func lineEnd(line string) string {
+	if strings.HasSuffix(line, "\r") {
+		return "\r"
+	}
+	return ""
+}
+
+func endsSentence(text string) bool {
+	t := strings.TrimSpace(strings.TrimPrefix(text, "//"))
+	return t == "" || strings.ContainsAny(t[len(t)-1:], ".!?")
+}
+
+func stripRefs(body string, cfg Config) (string, bool) {
+	out := parenRe.ReplaceAllStringFunc(body, func(m string) string {
+		if matchesComment(m, cfg) {
+			return ""
+		}
+		return m
+	})
+	for _, re := range cfg.comments {
+		loc := re.FindStringIndex(out)
+		if loc == nil || strings.TrimSpace(out[:loc[0]]) != "" {
+			continue
+		}
+		rest := out[loc[1]:]
+		if !hasWord(rest) {
+			out = ""
+			continue
+		}
+		if sep := leadSep.FindString(rest); sep != "" {
+			out = out[:loc[0]] + upperFirst(rest[len(sep):])
+		}
+	}
+	if matchesComment(out, cfg) {
+		return body, false
+	}
+	return out, true
+}
+
+func smart(text string, droppable bool, cfg Config) (string, int) {
+	if !strings.HasPrefix(text, "//") {
+		return text, leave
+	}
+	body, ok := stripRefs(text[2:], cfg)
+	switch {
+	case !ok:
+		return text, leave
+	case hasWord(body):
+		return "//" + strings.TrimRight(body, " \t"), rewrite
+	case droppable:
+		return "", remove
+	}
+	return text, leave
+}
+
 func fixGo(src []byte, cfg Config) ([]byte, int, int, error) {
+	res, err := fixFile(src, cfg)
+	return res.out, res.removed, res.cleaned, err
+}
+
+func fixFile(src []byte, cfg Config) (fixResult, error) {
+	res := fixResult{out: src}
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("does not parse")
+		return fixResult{}, fmt.Errorf("does not parse")
 	}
 	for _, im := range f.Imports {
 		if im.Path.Value == `"C"` {
-			return src, 0, 0, nil
+			return res, nil
 		}
 	}
 	lines := strings.Split(string(src), "\n")
 	drop := map[int]bool{}
 	touched := map[int]bool{}
-	removed, cleaned := 0, 0
 	for _, cg := range f.Comments {
 		group := false
 		if cfg.FixScope == "group" {
@@ -91,30 +182,49 @@ func fixGo(src []byte, cfg Config) ([]byte, int, int, error) {
 				}
 			}
 		}
-		for _, c := range cg.List {
+		for k, c := range cg.List {
 			start, end := fset.Position(c.Pos()), fset.Position(c.End())
 			i := start.Line - 1
 			if directive(c.Text) || touched[i] {
 				continue
 			}
 			before := lines[i][:start.Column-1]
-			if group || matchesComment(c.Text, cfg) {
+			alone := strings.TrimSpace(before) == ""
+			hit := group || matchesComment(c.Text, cfg)
+			if hit && cfg.FixScope == "smart" {
+				first := k == 0 || endsSentence(cg.List[k-1].Text)
+				text, act := smart(c.Text, first || !alone, cfg)
+				switch act {
+				case leave:
+					res.review++
+				case rewrite:
+					lines[i] = before + text + lineEnd(lines[i])
+					touched[i] = true
+					res.cleaned++
+				case remove:
+					if alone {
+						drop[i] = true
+					} else {
+						lines[i] = strings.TrimRight(before, " \t") + lineEnd(lines[i])
+					}
+					touched[i] = true
+					res.removed++
+				}
+				continue
+			}
+			if hit {
 				after := lines[end.Line-1][end.Column-1:]
 				switch {
-				case strings.TrimSpace(before) == "" && strings.TrimSpace(after) == "":
+				case alone && strings.TrimSpace(after) == "":
 					for l := i; l < end.Line; l++ {
 						drop[l] = true
 						touched[l] = true
 					}
-					removed++
+					res.removed++
 				case start.Line == end.Line && strings.TrimSpace(after) == "":
-					cr := ""
-					if strings.HasSuffix(lines[i], "\r") {
-						cr = "\r"
-					}
-					lines[i] = strings.TrimRight(before, " \t") + cr
+					lines[i] = strings.TrimRight(before, " \t") + lineEnd(lines[i])
 					touched[i] = true
-					removed++
+					res.removed++
 				}
 				continue
 			}
@@ -129,13 +239,13 @@ func fixGo(src []byte, cfg Config) ([]byte, int, int, error) {
 				if clean != tail {
 					lines[i] = before + clean
 					touched[i] = true
-					cleaned++
+					res.cleaned++
 				}
 			}
 		}
 	}
-	if removed == 0 && cleaned == 0 {
-		return src, 0, 0, nil
+	if res.removed == 0 && res.cleaned == 0 {
+		return res, nil
 	}
 	var keep []string
 	for i, l := range lines {
@@ -145,34 +255,37 @@ func fixGo(src []byte, cfg Config) ([]byte, int, int, error) {
 	}
 	out := []byte(strings.Join(keep, "\n"))
 	if !sameCode(src, out) {
-		return nil, 0, 0, fmt.Errorf("proof failed: code tokens would change")
+		return fixResult{}, fmt.Errorf("proof failed: code tokens would change")
 	}
 	if formatted, err := format.Source(src); err == nil && bytes.Equal(formatted, src) {
 		if again, err := format.Source(out); err == nil && sameCode(src, again) {
 			out = again
 		}
 	}
-	return out, removed, cleaned, nil
+	res.out = out
+	return res, nil
 }
 
 func fixAll(root string, cfg Config, dry bool) error {
-	files, removed, cleaned, skipped := 0, 0, 0, 0
+	files, skipped := 0, 0
+	var sum fixResult
 	err := walkFiles(root, cfg, func(rel, abs string, src []byte) error {
 		if filepath.Ext(abs) != ".go" {
 			return nil
 		}
-		out, r, c, err := fixGo(src, cfg)
+		res, err := fixFile(src, cfg)
 		if err != nil {
 			skipped++
 			fmt.Printf("fix: skipped %s: %v\n", rel, err)
 			return nil
 		}
-		if r == 0 && c == 0 {
+		sum.review += res.review
+		if res.removed == 0 && res.cleaned == 0 {
 			return nil
 		}
 		files++
-		removed += r
-		cleaned += c
+		sum.removed += res.removed
+		sum.cleaned += res.cleaned
 		if dry {
 			return nil
 		}
@@ -180,7 +293,7 @@ func fixAll(root string, cfg Config, dry bool) error {
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(abs, out, info.Mode().Perm())
+		return os.WriteFile(abs, res.out, info.Mode().Perm())
 	})
 	if err != nil {
 		return err
@@ -189,6 +302,6 @@ func fixAll(root string, cfg Config, dry bool) error {
 	if dry {
 		mode = "would change"
 	}
-	fmt.Printf("fix: %s %d files, %d comments removed, %d comments cleaned, %d files skipped\n", mode, files, removed, cleaned, skipped)
+	fmt.Printf("fix: %s %d files, %d comments removed, %d comments cleaned, %d left for review, %d files skipped\n", mode, files, sum.removed, sum.cleaned, sum.review, skipped)
 	return nil
 }
