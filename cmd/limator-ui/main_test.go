@@ -12,7 +12,8 @@ import (
 func testServer(t *testing.T) (*server, *[][]string) {
 	t.Helper()
 	var calls [][]string
-	s := &server{dir: t.TempDir(), who: "tester", token: "secret", host: "127.0.0.1:8765", work: t.TempDir(), bin: "limator", fresh: map[string]bool{}}
+	s := &server{dir: t.TempDir(), who: "tester", token: "secret", host: "127.0.0.1:8765",
+		work: t.TempDir(), store: t.TempDir(), bin: "limator", fresh: map[string]bool{}}
 	s.run = func(bin string, args ...string) (string, error) {
 		calls = append(calls, append([]string{bin}, args...))
 		for i, a := range args {
@@ -153,5 +154,32 @@ func TestDocumentsAreReusedUntilSomethingChanges(t *testing.T) {
 	}
 	if w := do(s, "GET", "/data/audit?t=secret", "", ""); w.Code != http.StatusOK || len(*calls) != 3 {
 		t.Fatalf("after a scan the document must be rebuilt: %d %v", w.Code, *calls)
+	}
+}
+
+func TestLineShowsContextAndStaysInsideTheFolder(t *testing.T) {
+	s, _ := testServer(t)
+	if err := os.WriteFile(filepath.Join(s.dir, "a.go"), []byte("one\ntwo\nthree\nfour\nfive\nsix\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := do(s, "GET", "/line?t=secret&file=a.go&line=4", "", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"start":2`) || !strings.Contains(w.Body.String(), `"two","three","four","five"`) {
+		t.Fatalf("line: %d %s", w.Code, w.Body)
+	}
+	if w := do(s, "GET", "/line?t=secret&file=../secret.txt&line=1", "", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("path outside the folder: %d", w.Code)
+	}
+}
+
+func TestKeptLinesAreRemembered(t *testing.T) {
+	s, _ := testServer(t)
+	if w := do(s, "POST", "/keep?t=secret", "file=a.go&text=", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("empty text: %d", w.Code)
+	}
+	if w := do(s, "POST", "/keep?t=secret", "file=a.go&text=%2F%2F+kept+line", ""); w.Code != http.StatusOK {
+		t.Fatalf("keep: %d %s", w.Code, w.Body)
+	}
+	if w := do(s, "GET", "/kept?t=secret", "", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "// kept line") {
+		t.Fatalf("kept: %d %s", w.Code, w.Body)
 	}
 }

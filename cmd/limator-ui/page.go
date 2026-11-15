@@ -43,6 +43,14 @@ white-space:pre-wrap;word-break:break-word;max-height:30vh;overflow:auto}
 .old{color:#e0a59b}
 .new{color:#9be0b4}
 a{color:var(--accent)}
+#progress{height:4px;margin:8px 24px 0;background:var(--panel);border-radius:2px;overflow:hidden;visibility:hidden}
+#progress.on{visibility:visible}
+#progress i{display:block;height:100%;width:30%;background:var(--accent);animation:slide 1.2s linear infinite}
+@keyframes slide{from{margin-left:-30%}to{margin-left:100%}}
+@media (prefers-reduced-motion:reduce){#progress i{animation:none;width:100%}}
+pre.ctx{flex-basis:100%;margin:0;padding:8px;background:var(--bg);border:1px solid var(--line);border-radius:6px}
+pre.ctx{font:13px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
+.hit{color:var(--accent)}
 section[hidden]{display:none}
 </style>
 </head>
@@ -58,6 +66,7 @@ section[hidden]{display:none}
 <button role="tab" data-tab="inventory">Inventory</button>
 <button role="tab" data-tab="files">Reports and folder</button>
 </nav>
+<div id="progress" role="progressbar" aria-label="Working"><i></i></div>
 <div id="status" aria-live="polite">Ready.</div>
 <main>
 <section id="overview">
@@ -66,7 +75,9 @@ section[hidden]{display:none}
 <h2>Rules</h2><div id="rules"></div>
 </section>
 <section id="findings" hidden>
-<div class="bar"><select id="frule" aria-label="Rule"></select><input class="wide" id="fpath" placeholder="Filter on path or message" aria-label="Filter"></div>
+<div class="bar"><select id="frule" aria-label="Rule"></select>
+<select id="flevel" aria-label="Level"><option value="">All levels</option><option>high</option><option>medium</option><option>low</option></select>
+<input class="wide" id="fpath" placeholder="Filter on path or message" aria-label="Filter"></div>
 <div class="dim" id="fcount"></div><div id="flist"></div>
 </section>
 <section id="fix" hidden>
@@ -79,7 +90,7 @@ Apply keeps a copy of each file; undo puts those back.</div><div id="clist"></di
 <section id="review" hidden>
 <div class="bar"><button id="rload">Load review list</button><input class="wide" id="rpath" placeholder="Filter on path" aria-label="Filter"></div>
 <div class="dim" id="rcount">Matches the fix leaves alone because removing them would break a sentence.
-Rewrite them by hand, or record an exception with a reason.</div><div id="rlist"></div>
+Rewrite them by hand. Keep as it is remembers the line, Skip hides it for now, Exception accepts the whole file with a reason.</div><div id="rlist"></div>
 </section>
 <section id="reading" hidden>
 <div class="bar"><button id="lload">Load reading list</button>

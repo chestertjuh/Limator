@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +24,7 @@ import (
 type server struct {
 	mu                         sync.Mutex
 	dir, cfg, who, base, vulns string
-	token, host, work          string
+	token, host, work, store   string
 	bin, updater               string
 	fresh                      map[string]bool
 	run                        func(bin string, args ...string) (string, error)
@@ -317,6 +319,9 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/run", s.action)
 	mux.HandleFunc("/except", s.except)
 	mux.HandleFunc("/dir", s.folder)
+	mux.HandleFunc("/line", s.line)
+	mux.HandleFunc("/keep", s.keep)
+	mux.HandleFunc("/kept", s.keptList)
 	return mux
 }
 
@@ -367,8 +372,13 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	home, err := os.UserCacheDir()
+	if err != nil {
+		fail(err)
+	}
+	store := filepath.Join(home, "limator")
 	s := &server{dir: abs, cfg: *cfg, who: *who, base: *base, vulns: *vulns, token: hex.EncodeToString(raw),
-		host: "127.0.0.1:" + *port, work: work, bin: *bin, fresh: map[string]bool{}, updater: beside("limator-update")}
+		host: "127.0.0.1:" + *port, work: work, store: store, bin: *bin, fresh: map[string]bool{}, updater: beside("limator-update")}
 	s.run = func(bin string, args ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -382,4 +392,101 @@ func main() {
 	fmt.Printf("limator-ui: open http://%s/?t=%s\n", s.host, s.token)
 	srv := &http.Server{Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
 	fail(srv.Serve(ln))
+}
+
+type kept struct {
+	File string `json:"file"`
+	Text string `json:"text"`
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		fmt.Fprintln(os.Stderr, "limator-ui:", err)
+	}
+}
+
+func (s *server) keptPath() string {
+	sum := sha256.Sum256([]byte(s.dir))
+	return filepath.Join(s.store, "review-"+hex.EncodeToString(sum[:8])+".json")
+}
+
+func (s *server) readKept() ([]kept, error) {
+	list := []kept{}
+	raw, err := os.ReadFile(s.keptPath())
+	if os.IsNotExist(err) {
+		return list, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (s *server) keptList(w http.ResponseWriter, r *http.Request) {
+	if !s.allowed(w, r) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list, err := s.readKept()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, list)
+}
+
+func (s *server) keep(w http.ResponseWriter, r *http.Request) {
+	if !s.posted(w, r) {
+		return
+	}
+	item := kept{r.FormValue("file"), r.FormValue("text")}
+	if !plain(item.File) || item.Text == "" {
+		http.Error(w, "file and text required", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list, err := s.readKept()
+	if err != nil {
+		reply(w, "", err)
+		return
+	}
+	raw, err := json.MarshalIndent(append(list, item), "", "  ")
+	if err == nil {
+		if err = os.MkdirAll(s.store, 0o700); err == nil {
+			err = os.WriteFile(s.keptPath(), raw, 0o600)
+		}
+	}
+	reply(w, "kept as it is: "+item.File, err)
+}
+
+func (s *server) line(w http.ResponseWriter, r *http.Request) {
+	if !s.allowed(w, r) {
+		return
+	}
+	file := filepath.FromSlash(r.URL.Query().Get("file"))
+	n, err := strconv.Atoi(r.URL.Query().Get("line"))
+	if err != nil || n < 1 || !filepath.IsLocal(file) {
+		http.Error(w, "file and line required", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	dir := s.dir
+	s.mu.Unlock()
+	raw, err := os.ReadFile(filepath.Join(dir, file))
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	lines := strings.Split(strings.ReplaceAll(string(raw), "\r", ""), "\n")
+	from, to := max(n-3, 0), min(n+2, len(lines))
+	if from > to {
+		from = to
+	}
+	writeJSON(w, map[string]any{"start": from + 1, "lines": lines[from:to]})
 }

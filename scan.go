@@ -14,15 +14,16 @@ import (
 )
 
 type Report struct {
-	Tool       string         `json:"tool"`
-	Version    string         `json:"version"`
-	Files      int            `json:"files"`
-	Rules      []Rule         `json:"rules"`
-	Counts     map[string]int `json:"counts"`
-	Suppressed map[string]int `json:"suppressed"`
-	Exceptions []Exception    `json:"exceptions"`
-	Hash       string         `json:"hash"`
-	Findings   []Finding      `json:"findings"`
+	Tool       string            `json:"tool"`
+	Version    string            `json:"version"`
+	Files      int               `json:"files"`
+	Rules      []Rule            `json:"rules"`
+	Counts     map[string]int    `json:"counts"`
+	Suppressed map[string]int    `json:"suppressed"`
+	Exceptions []Exception       `json:"exceptions"`
+	Levels     map[string]string `json:"levels"`
+	Hash       string            `json:"hash"`
+	Findings   []Finding         `json:"findings"`
 }
 
 func checkFile(e entry, src []byte, cfg Config) []Finding {
@@ -65,6 +66,10 @@ func scan(root string, cfg Config) (*Report, error) {
 	}
 	for _, l := range cfg.Laws {
 		rep.Rules = append(rep.Rules, Rule{l.ID, l.Name, l.Msg})
+	}
+	rep.Levels = map[string]string{}
+	for _, r := range rep.Rules {
+		rep.Levels[r.ID] = levelOf(r.ID)
 	}
 	entries, err := listTree(root, cfg, wantedExt(cfg))
 	if err != nil {

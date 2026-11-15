@@ -1,7 +1,7 @@
 package main
 
 const script = `
-var statusBox = document.getElementById('status'), report = null, changes = null, deps = null, timer = null, shown = 300;
+var statusBox = document.getElementById('status'), report = null, changes = null, deps = null, timer = null, shown = 300, keptSet = {}, skipped = {};
 function $(id) { return document.getElementById(id); }
 function el(tag, cls, text) {
   var e = document.createElement(tag);
@@ -13,6 +13,7 @@ function url(path) { return path + '?t=' + encodeURIComponent(token); }
 function busy(on, what) {
   document.querySelectorAll('main button').forEach(function (b) { b.disabled = on; });
   clearInterval(timer);
+  $('progress').className = on ? 'on' : '';
   if (!on) return;
   var start = Date.now();
   statusBox.textContent = what + '...';
@@ -55,6 +56,24 @@ function exceptButton(rule, file) {
   };
   return b;
 }
+function codeButton(r, file, line) {
+  var b = el('button', 'small', 'Code');
+  b.onclick = function () {
+    var old = r.querySelector('pre.ctx');
+    if (old) { old.remove(); return; }
+    fetch(url('/line') + '&file=' + encodeURIComponent(file) + '&line=' + line).then(function (res) {
+      if (!res.ok) throw new Error('the file could not be read');
+      return res.json();
+    }).then(function (c) {
+      var pre = el('pre', 'ctx');
+      c.lines.forEach(function (text, i) {
+        pre.append(el('span', c.start + i === line ? 'hit' : 'dim', (c.start + i) + '  ' + text + '\n'));
+      });
+      r.append(pre);
+    }, function (e) { statusBox.textContent = 'Failed: ' + e.message; });
+  };
+  return b;
+}
 function show(tab) {
   document.querySelectorAll('main section').forEach(function (s) { s.hidden = s.id !== tab; });
   document.querySelectorAll('#tabs button').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === tab); });
@@ -82,20 +101,33 @@ function overview() {
     pick.append(new Option(rule.id + ' ' + rule.name + ' (' + n + ')', rule.id));
     var open = el('button', 'small', 'Show');
     open.onclick = function () { pick.value = rule.id; show('findings'); findings(); };
-    rules.append(row([el('span', 'id', rule.id), el('span', 'where', rule.name), el('span', 'num', n), open]));
+    rules.append(row([el('span', 'id', rule.id), el('span', 'where', rule.name),
+      el('span', 'dim', (report.levels || {})[rule.id] || ''), el('span', 'num', n), open]));
   });
   if (!total) rules.append(el('div', 'dim', 'No findings.'));
 }
 function findings() {
   if (!report) return;
-  var rule = $('frule').value, needle = $('fpath').value;
-  var items = (report.findings || []).filter(function (f) { return (!rule || f.rule === rule) && has(f.file + ' ' + f.msg, needle); });
+  var rule = $('frule').value, needle = $('fpath').value, level = $('flevel').value, levels = report.levels || {};
+  var items = (report.findings || []).filter(function (f) {
+    return (!rule || f.rule === rule) && (!level || levels[f.rule] === level) && has(f.file + ' ' + f.msg, needle);
+  });
   fill($('flist'), $('fcount'), items, function (f) {
-    return row([el('span', 'id', f.rule), el('span', 'where', f.file + ':' + f.line), exceptButton(f.rule, f.file), el('span', 'code dim', f.msg)]);
+    var r = row([el('span', 'id', f.rule), el('span', 'where', f.file + ':' + f.line), el('span', 'dim', levels[f.rule] || '')]);
+    r.append(codeButton(r, f.file, f.line), exceptButton(f.rule, f.file), el('span', 'code dim', f.msg));
+    return r;
   }, (report.findings || []).length);
 }
 function loadChanges() {
-  return get('changes', 'Working out the fix').then(function (data) { changes = data; changeList(); reviewList(); }, quiet);
+  return get('changes', 'Working out the fix').then(function (data) {
+    changes = data;
+    return fetch(url('/kept')).then(function (r) { return r.ok ? r.json() : []; });
+  }).then(function (list) {
+    keptSet = {};
+    list.forEach(function (k) { keptSet[k.file + '\n' + k.text] = true; });
+    changeList();
+    reviewList();
+  }, quiet);
 }
 function changeList() {
   if (!changes) return;
@@ -111,9 +143,21 @@ function changeList() {
 function reviewList() {
   if (!changes) return;
   var needle = $('rpath').value;
-  var items = (changes.changes || []).filter(function (c) { return c.kind === 'review' && has(c.file, needle); });
+  var items = (changes.changes || []).filter(function (c) {
+    return c.kind === 'review' && has(c.file, needle) && !keptSet[c.file + '\n' + c.before] && !skipped[c.file + ':' + c.line];
+  });
   fill($('rlist'), $('rcount'), items, function (c) {
-    return row([el('span', 'where', c.file + ':' + c.line), exceptButton('L001', c.file), el('span', 'code', c.before)]);
+    var r = row([el('span', 'where', c.file + ':' + c.line)]);
+    var keep = el('button', 'small', 'Keep as it is'), skip = el('button', 'small', 'Skip');
+    keep.onclick = function () {
+      post('/keep', {file: c.file, text: c.before}, 'Recording').then(function () {
+        keptSet[c.file + '\n' + c.before] = true;
+        r.remove();
+      }, quiet);
+    };
+    skip.onclick = function () { skipped[c.file + ':' + c.line] = true; r.remove(); };
+    r.append(codeButton(r, c.file, c.line), keep, skip, exceptButton('L001', c.file), el('span', 'code', c.before));
+    return r;
   });
 }
 function readingList(units) {
@@ -167,6 +211,7 @@ $('update').hidden = !hasUpdate;
 $('gate').onclick = function () { post('/run', {a: 'gate'}, 'Checking the gate').then(quiet, quiet); };
 $('update').onclick = function () { post('/run', {a: 'update'}, 'Fetching vulnerability data').then(function () { report = null; }, quiet); };
 $('frule').onchange = findings;
+$('flevel').onchange = findings;
 $('fpath').oninput = findings;
 $('preview').onclick = loadChanges;
 $('rload').onclick = loadChanges;

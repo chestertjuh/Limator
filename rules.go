@@ -212,3 +212,13 @@ func checkRows(body *ast.BlockStmt, add func(string, token.Pos, string)) {
 		}
 	}
 }
+
+func levelOf(id string) string {
+	switch {
+	case strings.HasPrefix(id, "SEC"), strings.HasPrefix(id, "H"):
+		return "high"
+	case id == "L001", id == "L006", id == "L007", id == "L008", strings.HasPrefix(id, "TS"):
+		return "low"
+	}
+	return "medium"
+}
