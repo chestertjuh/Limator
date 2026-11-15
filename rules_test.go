@@ -760,3 +760,15 @@ func TestFixThenUndo(t *testing.T) {
 		t.Fatal("second undo should find nothing")
 	}
 }
+
+func TestFixSmartRemovesLabels(t *testing.T) {
+	src := "package p\n\n// a_test.go - TICKET-9: checks the gate.\n// Done. TICKET-3: now it holds.\n// Kept since TICKET-4 broke it.\nvar X = 1\n"
+	want := "package p\n\n// a_test.go - checks the gate.\n// Done. Now it holds.\n// Kept since TICKET-4 broke it.\nvar X = 1\n"
+	res, err := fixFile([]byte(src), fixCfg("smart"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(res.out) != want || res.cleaned != 2 || res.review != 1 {
+		t.Fatalf("cleaned %d, review %d, got:\n%s", res.cleaned, res.review, res.out)
+	}
+}

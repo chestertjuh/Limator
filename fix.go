@@ -51,8 +51,10 @@ func (r *fixResult) note(kind string, i int, before, after string) {
 }
 
 var (
-	parenRe = regexp.MustCompile(`\s*\([^()]*\)`)
-	leadSep = regexp.MustCompile(`^\s*[:\-\x{2013}\x{2014}]\s+`)
+	parenRe     = regexp.MustCompile(`\s*\([^()]*\)`)
+	leadSep     = regexp.MustCompile(`^\s*[:\-\x{2013}\x{2014}]\s+`)
+	labelSep    = regexp.MustCompile(`^:\s+`)
+	beforeLabel = regexp.MustCompile(`(\s[-\x{2013}\x{2014}]|[:.;])\s+$`)
 )
 
 func tokens(src []byte) ([]string, error) {
@@ -134,6 +136,31 @@ func endsSentence(text string) bool {
 	return t == "" || strings.ContainsAny(t[len(t)-1:], ".!?")
 }
 
+func stripLabels(out string, cfg Config) string {
+	for _, re := range cfg.comments {
+		from := 0
+		for {
+			loc := re.FindStringIndex(out[from:])
+			if loc == nil {
+				break
+			}
+			a, b := from+loc[0], from+loc[1]
+			sep := labelSep.FindString(out[b:])
+			if sep == "" || !beforeLabel.MatchString(out[:a]) {
+				from = b
+				continue
+			}
+			rest := out[b+len(sep):]
+			if strings.HasSuffix(strings.TrimRight(out[:a], " \t"), ".") {
+				rest = upperFirst(rest)
+			}
+			out = out[:a] + rest
+			from = a
+		}
+	}
+	return out
+}
+
 func stripRefs(body string, cfg Config) (string, bool) {
 	out := parenRe.ReplaceAllStringFunc(body, func(m string) string {
 		if matchesComment(m, cfg) {
@@ -141,6 +168,7 @@ func stripRefs(body string, cfg Config) (string, bool) {
 		}
 		return m
 	})
+	out = stripLabels(out, cfg)
 	for _, re := range cfg.comments {
 		loc := re.FindStringIndex(out)
 		if loc == nil || strings.TrimSpace(out[:loc[0]]) != "" {
