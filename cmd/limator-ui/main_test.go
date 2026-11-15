@@ -12,7 +12,7 @@ import (
 func testServer(t *testing.T) (*server, *[][]string) {
 	t.Helper()
 	var calls [][]string
-	s := &server{dir: t.TempDir(), who: "tester", token: "secret", host: "127.0.0.1:8765", work: t.TempDir(), bin: "limator"}
+	s := &server{dir: t.TempDir(), who: "tester", token: "secret", host: "127.0.0.1:8765", work: t.TempDir(), bin: "limator", fresh: map[string]bool{}}
 	s.run = func(bin string, args ...string) (string, error) {
 		calls = append(calls, append([]string{bin}, args...))
 		for i, a := range args {
@@ -135,5 +135,23 @@ func TestFolderMustExist(t *testing.T) {
 	next := t.TempDir()
 	if w := do(s, "POST", "/dir?t=secret", "dir="+filepath.ToSlash(next), ""); w.Code != http.StatusOK || s.dir != filepath.Clean(next) {
 		t.Fatalf("switch: %d %s", w.Code, s.dir)
+	}
+}
+
+func TestDocumentsAreReusedUntilSomethingChanges(t *testing.T) {
+	s, calls := testServer(t)
+	for i := 0; i < 2; i++ {
+		if w := do(s, "GET", "/data/audit?t=secret", "", ""); w.Code != http.StatusOK {
+			t.Fatalf("audit: %d", w.Code)
+		}
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("second request ran the scanner again: %v", *calls)
+	}
+	if w := do(s, "POST", "/run?t=secret", "a=scan", ""); w.Code != http.StatusOK {
+		t.Fatalf("scan: %d", w.Code)
+	}
+	if w := do(s, "GET", "/data/audit?t=secret", "", ""); w.Code != http.StatusOK || len(*calls) != 3 {
+		t.Fatalf("after a scan the document must be rebuilt: %d %v", w.Code, *calls)
 	}
 }

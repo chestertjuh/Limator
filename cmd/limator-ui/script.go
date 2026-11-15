@@ -161,7 +161,7 @@ function confirmRun(action, question, what) {
     $('clist').textContent = ''; $('rlist').textContent = ''; }, quiet);
 }
 document.querySelectorAll('#tabs button').forEach(function (b) { b.onclick = function () { show(b.dataset.tab); }; });
-$('scan').onclick = loadReport;
+$('scan').onclick = function () { post('/run', {a: 'scan'}, 'Scanning').then(loadReport, quiet); };
 $('gate').hidden = !hasGate;
 $('update').hidden = !hasUpdate;
 $('gate').onclick = function () { post('/run', {a: 'gate'}, 'Checking the gate').then(quiet, quiet); };

@@ -24,6 +24,7 @@ type server struct {
 	dir, cfg, who, base, vulns string
 	token, host, work          string
 	bin, updater               string
+	fresh                      map[string]bool
 	run                        func(bin string, args ...string) (string, error)
 }
 
@@ -142,7 +143,13 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) produce(name string, cmd []string) (string, string, error) {
 	file := filepath.Join(s.work, name)
+	if s.fresh[name] {
+		return file, "", nil
+	}
 	out, err := s.run(s.bin, s.args(cmd[0], append(append([]string{}, cmd[1:]...), "-o", file)...)...)
+	if err == nil {
+		s.fresh[name] = true
+	}
 	return file, out, err
 }
 
@@ -193,6 +200,7 @@ func (s *server) action(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh = map[string]bool{}
 	bin := s.bin
 	var args []string
 	switch r.FormValue("a") {
@@ -242,6 +250,7 @@ func (s *server) except(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.fresh = map[string]bool{}
 	reply(w, "exception added for "+e.Rule+" in "+e.Path, addException(s.configPath(), e))
 }
 
@@ -295,7 +304,7 @@ func (s *server) folder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.dir, s.cfg = filepath.Clean(dir), cfg
+	s.dir, s.cfg, s.fresh = filepath.Clean(dir), cfg, map[string]bool{}
 	s.mu.Unlock()
 	reply(w, "folder set to "+dir, nil)
 }
@@ -359,7 +368,7 @@ func main() {
 		fail(err)
 	}
 	s := &server{dir: abs, cfg: *cfg, who: *who, base: *base, vulns: *vulns, token: hex.EncodeToString(raw),
-		host: "127.0.0.1:" + *port, work: work, bin: *bin, updater: beside("limator-update")}
+		host: "127.0.0.1:" + *port, work: work, bin: *bin, fresh: map[string]bool{}, updater: beside("limator-update")}
 	s.run = func(bin string, args ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()

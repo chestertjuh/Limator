@@ -38,6 +38,21 @@ func checkFile(e entry, src []byte, cfg Config) []Finding {
 	return out
 }
 
+func cached(entries []entry, store *cache, prefix string, check func(e entry, src []byte) []Finding) ([][]Finding, []string, error) {
+	keys := make([]string, len(entries))
+	found, err := mapFiles(entries, func(i int, e entry, src []byte) []Finding {
+		if store == nil {
+			return check(e, src)
+		}
+		keys[i] = fileKey(prefix+e.rel, src)
+		if hit, ok := store.old[keys[i]]; ok {
+			return hit
+		}
+		return check(e, src)
+	})
+	return found, keys, err
+}
+
 func scan(root string, cfg Config) (*Report, error) {
 	rep := &Report{Tool: "limator", Version: version, Findings: []Finding{}, Exceptions: []Exception{}}
 	rep.Counts, rep.Suppressed = map[string]int{}, map[string]int{}
@@ -56,23 +71,20 @@ func scan(root string, cfg Config) (*Report, error) {
 		return nil, err
 	}
 	store := openCache(root, cfg)
-	keys := make([]string, len(entries))
-	found, err := mapFiles(entries, func(i int, e entry, src []byte) []Finding {
-		if store == nil {
-			return checkFile(e, src, cfg)
-		}
-		key := fileKey(e.rel, src)
-		keys[i] = key
-		if hit, ok := store.old[key]; ok {
-			return hit
-		}
-		return checkFile(e, src, cfg)
-	})
+	found, keys, err := cached(entries, store, "", func(e entry, src []byte) []Finding { return checkFile(e, src, cfg) })
+	if err != nil {
+		return nil, err
+	}
+	guarded, err := listTree(root, cfg, func(name string) bool { return secretFile(name, cfg) })
+	if err != nil {
+		return nil, err
+	}
+	secrets, secretKeys, err := cached(guarded, store, "secret:", func(e entry, src []byte) []Finding { return checkSecrets(e.rel, src) })
 	if err != nil {
 		return nil, err
 	}
 	if store != nil {
-		if err := store.save(keys, found); err != nil {
+		if err := store.save(append(keys, secretKeys...), append(found, secrets...)); err != nil {
 			fmt.Fprintln(os.Stderr, "limator: cache not saved:", err)
 		}
 	}
@@ -84,12 +96,8 @@ func scan(root string, cfg Config) (*Report, error) {
 	for _, im := range cfg.Imports {
 		all = append(all, importTool(cfg.dir, im)...)
 	}
-	err = walkTree(root, cfg, func(name string) bool { return secretFile(name, cfg) }, func(rel, abs string, src []byte) error {
-		all = append(all, checkSecrets(rel, src)...)
-		return nil
-	})
-	if err != nil {
-		return nil, err
+	for _, f := range secrets {
+		all = append(all, f...)
 	}
 	if cfg.VulnDB != "" {
 		all = append(all, checkVulns(root, cfg)...)
