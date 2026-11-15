@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const version = "0.12.2"
+const version = "0.12.3"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`
