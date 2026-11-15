@@ -36,6 +36,7 @@ func checkFile(e entry, src []byte, cfg Config) []Finding {
 	if tsExt[filepath.Ext(e.abs)] {
 		out = append(out, checkTS(e.rel, src, cfg)...)
 	}
+	markLineExceptions(out, src, cfg)
 	return out
 }
 
@@ -115,6 +116,11 @@ func scan(root string, cfg Config) (*Report, error) {
 		rep.Exceptions = append(rep.Exceptions, e)
 	}
 	for _, f := range all {
+		if rule, idx, ok := lineException(f.Rule); ok && idx < len(rep.Exceptions) {
+			rep.Exceptions[idx].Used++
+			rep.Suppressed[rule]++
+			continue
+		}
 		hit := false
 		for i := range rep.Exceptions {
 			if rep.Exceptions[i].matches(f) {

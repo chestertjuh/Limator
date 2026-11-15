@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const version = "0.13.0"
+const version = "0.14.0"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`
@@ -21,6 +21,9 @@ usage:
   limator gate   <dir> [-c config.json] -b baseline.json
   limator fix    <dir> [-c config.json] [-n yes] [-o changes.json]
   limator undo   <dir>
+  limator hook   <dir> [-c config.json] [-b baseline.json]
+  limator headers <dir> [-c config.json] [-o headers.json]
+  limator header <dir> -f file.go -text "one line saying what the file is for"
   limator inventory <dir> [-c config.json] -o file [-f json|cyclonedx]
   limator audit  <dir> [-c config.json] -o audit.json
   limator readlist <dir> [-c config.json] [-n 20] [-o file]
@@ -47,7 +50,7 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) < 3 || !strings.Contains(" scan report gate fix undo inventory audit readlist read coverage origin caps ", " "+cmd+" ") {
+	if len(os.Args) < 3 || !strings.Contains(" scan report gate fix undo hook headers header inventory audit readlist read coverage origin caps ", " "+cmd+" ") {
 		usage()
 	}
 	root := os.Args[2]
@@ -75,6 +78,24 @@ func main() {
 	}
 	if cmd == "read" || cmd == "coverage" || cmd == "origin" {
 		if err := reading(cmd, root, cfg, opt); err != nil {
+			fail(err)
+		}
+		return
+	}
+	if cmd == "hook" {
+		if err := installHook(root, opt["-b"], opt["-c"]); err != nil {
+			fail(err)
+		}
+		return
+	}
+	if cmd == "headers" {
+		if err := writeHeaders(root, cfg, opt["-o"]); err != nil {
+			fail(err)
+		}
+		return
+	}
+	if cmd == "header" {
+		if err := addHeader(root, opt["-f"], opt["-text"]); err != nil {
 			fail(err)
 		}
 		return

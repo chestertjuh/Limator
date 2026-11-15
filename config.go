@@ -27,6 +27,7 @@ type Exception struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
 	Used   int    `json:"used"`
+	Line   string `json:"line,omitempty"`
 }
 
 type Import struct {
@@ -191,15 +192,16 @@ func matchAny(pats []string, name string) bool {
 }
 
 func (e Exception) matches(f Finding) bool {
-	if e.Rule != f.Rule {
-		return false
-	}
+	return e.Rule == f.Rule && e.Line == "" && e.covers(f.File)
+}
+
+func (e Exception) covers(file string) bool {
 	if strings.HasSuffix(e.Path, "/") {
-		return strings.HasPrefix(f.File, e.Path)
+		return strings.HasPrefix(file, e.Path)
 	}
-	if ok, err := path.Match(e.Path, f.File); err == nil && ok {
+	if ok, err := path.Match(e.Path, file); err == nil && ok {
 		return true
 	}
-	ok, err := path.Match(e.Path, path.Base(f.File))
+	ok, err := path.Match(e.Path, path.Base(file))
 	return err == nil && ok
 }

@@ -72,8 +72,8 @@ func TestActions(t *testing.T) {
 	if w := do(s, "POST", "/run?t=secret", "a=read&file=-x&fn=F", ""); w.Code != http.StatusBadRequest {
 		t.Fatalf("flag as file: %d", w.Code)
 	}
-	if w := do(s, "POST", "/run?t=secret", "a=gate", ""); w.Code != http.StatusBadRequest {
-		t.Fatalf("gate without baseline: %d", w.Code)
+	if w := do(s, "POST", "/run?t=secret", "a=hook", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("hook without confirm: %d", w.Code)
 	}
 	if w := do(s, "GET", "/run?t=secret&a=scan", "", ""); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("get: %d", w.Code)
@@ -181,5 +181,38 @@ func TestKeptLinesAreRemembered(t *testing.T) {
 	}
 	if w := do(s, "GET", "/kept?t=secret", "", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "// kept line") {
 		t.Fatalf("kept: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestLineExceptionStoresTheSourceLine(t *testing.T) {
+	s, _ := testServer(t)
+	if err := os.WriteFile(filepath.Join(s.dir, "a.go"), []byte("package p\n\n\t// kept on this line\nvar A = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(s, "POST", "/except?t=secret", "rule=L001&path=a.go&line=3&reason=this+one+explains+the+code", ""); w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body)
+	}
+	got, err := os.ReadFile(filepath.Join(s.dir, "limator.json"))
+	if err != nil || !strings.Contains(string(got), `"line": "// kept on this line"`) {
+		t.Fatalf("%v config:\n%s", err, got)
+	}
+	if w := do(s, "POST", "/except?t=secret", "rule=L001&path=a.go&line=99&reason=this+one+explains+the+code", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing line: %d", w.Code)
+	}
+}
+
+func TestGateUsesADefaultBaselineAndHeaderNeedsText(t *testing.T) {
+	s, calls := testServer(t)
+	if w := do(s, "POST", "/run?t=secret", "a=gate", ""); w.Code != http.StatusOK {
+		t.Fatalf("gate: %d", w.Code)
+	}
+	if got := strings.Join((*calls)[0][1:], " "); !strings.HasSuffix(got, "-b "+filepath.Join(s.dir, "limator-baseline.json")) {
+		t.Fatalf("gate args: %s", got)
+	}
+	if w := do(s, "POST", "/run?t=secret", "a=header&file=a.go&text=", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("header without text: %d", w.Code)
+	}
+	if w := do(s, "POST", "/run?t=secret", "a=header&file=a.go&text=a.go+adds+numbers.", ""); w.Code != http.StatusOK || (*calls)[1][1] != "header" {
+		t.Fatalf("header: %d %v", w.Code, *calls)
 	}
 }

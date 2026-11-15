@@ -25,6 +25,7 @@ type server struct {
 	mu                         sync.Mutex
 	dir, cfg, who, base, vulns string
 	token, host, work, store   string
+	lang                       string
 	bin, updater               string
 	fresh                      map[string]bool
 	run                        func(bin string, args ...string) (string, error)
@@ -34,6 +35,7 @@ type exception struct {
 	Rule   string `json:"rule"`
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
+	Line   string `json:"line,omitempty"`
 }
 
 var (
@@ -45,6 +47,7 @@ var (
 		"readlist":  {"readlist", "-n", "200"},
 		"audit":     {"audit"},
 		"inventory": {"inventory"},
+		"headers":   {"headers"},
 	}
 
 	downloads = map[string][]string{
@@ -136,7 +139,7 @@ func (s *server) home(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.mu.Lock()
 	data := map[string]any{"Dir": s.dir, "Cfg": s.configPath(), "Token": s.token, "Nonce": nonce,
-		"Who": s.who, "Gate": s.base != "", "Update": s.vulns != "" && s.updater != ""}
+		"Who": s.who, "Update": s.updater != "", "Lang": s.lang}
 	s.mu.Unlock()
 	if err := page.Execute(w, data); err != nil {
 		fmt.Fprintln(os.Stderr, "limator-ui:", err)
@@ -205,6 +208,7 @@ func (s *server) action(w http.ResponseWriter, r *http.Request) {
 	s.fresh = map[string]bool{}
 	bin := s.bin
 	var args []string
+	after := func() error { return nil }
 	switch r.FormValue("a") {
 	case "scan":
 		args = s.args("scan")
@@ -222,22 +226,45 @@ func (s *server) action(w http.ResponseWriter, r *http.Request) {
 		}
 		args = s.args("read", "-who", s.who, "-f", file, "-fn", fn)
 	case "gate":
-		if s.base == "" {
-			http.Error(w, "start limator-ui with -b baseline.json", http.StatusBadRequest)
+		args = s.args("gate", "-b", s.basePath())
+	case "hook":
+		if r.FormValue("confirm") != "yes" {
+			http.Error(w, "confirmation required", http.StatusBadRequest)
 			return
 		}
-		args = s.args("gate", "-b", s.base)
+		args = s.args("hook", "-b", s.basePath())
+	case "header":
+		file, text := r.FormValue("file"), strings.TrimSpace(r.FormValue("text"))
+		if !plain(file) || !plain(text) {
+			http.Error(w, "file and text required", http.StatusBadRequest)
+			return
+		}
+		args = []string{"header", s.dir, "-f", file, "-text", text}
 	case "update":
-		if s.vulns == "" || s.updater == "" {
-			http.Error(w, "start limator-ui with -vulndb folder", http.StatusBadRequest)
+		if s.updater == "" {
+			http.Error(w, "limator-update was not found beside limator-ui", http.StatusBadRequest)
 			return
 		}
-		bin, args = s.updater, []string{"vulndb", "-dir", s.vulns}
+		dir := s.vulnDir()
+		if dir == "" {
+			dir = filepath.Join(s.store, "vulndb")
+			after = func() error {
+				return editConfig(s.configPath(), func(doc map[string]json.RawMessage) error {
+					raw, err := json.Marshal(dir)
+					doc["vuln_db"] = raw
+					return err
+				})
+			}
+		}
+		bin, args = s.updater, []string{"vulndb", "-dir", dir}
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
 	}
 	out, err := s.run(bin, args...)
+	if err == nil {
+		err = after()
+	}
 	reply(w, out, err)
 }
 
@@ -245,18 +272,43 @@ func (s *server) except(w http.ResponseWriter, r *http.Request) {
 	if !s.posted(w, r) {
 		return
 	}
-	e := exception{r.FormValue("rule"), r.FormValue("path"), strings.TrimSpace(r.FormValue("reason"))}
+	e := exception{Rule: r.FormValue("rule"), Path: r.FormValue("path"), Reason: strings.TrimSpace(r.FormValue("reason"))}
 	if !ruleID.MatchString(e.Rule) || !plain(e.Path) || len(e.Reason) < 10 {
 		http.Error(w, "a rule, a path and a reason of at least 10 characters are required", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if n := r.FormValue("line"); n != "" {
+		lines, at, err := s.source(e.Path, n)
+		if err != nil || strings.TrimSpace(lines[at]) == "" {
+			http.Error(w, "that line could not be read", http.StatusBadRequest)
+			return
+		}
+		e.Line = strings.TrimSpace(lines[at])
+	}
 	s.fresh = map[string]bool{}
 	reply(w, "exception added for "+e.Rule+" in "+e.Path, addException(s.configPath(), e))
 }
 
 func addException(file string, e exception) error {
+	return editConfig(file, func(doc map[string]json.RawMessage) error {
+		var list []json.RawMessage
+		if cur, ok := doc["exceptions"]; ok {
+			if err := json.Unmarshal(cur, &list); err != nil {
+				return fmt.Errorf("exceptions in the config do not parse: %v", err)
+			}
+		}
+		item, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		doc["exceptions"], err = json.Marshal(append(list, item))
+		return err
+	})
+}
+
+func editConfig(file string, change func(doc map[string]json.RawMessage) error) error {
 	doc := map[string]json.RawMessage{}
 	raw, err := os.ReadFile(file)
 	if err != nil && !os.IsNotExist(err) {
@@ -267,17 +319,7 @@ func addException(file string, e exception) error {
 			return fmt.Errorf("config does not parse: %v", err)
 		}
 	}
-	var list []json.RawMessage
-	if cur, ok := doc["exceptions"]; ok {
-		if err := json.Unmarshal(cur, &list); err != nil {
-			return fmt.Errorf("exceptions in the config do not parse: %v", err)
-		}
-	}
-	item, err := json.Marshal(e)
-	if err != nil {
-		return err
-	}
-	if doc["exceptions"], err = json.Marshal(append(list, item)); err != nil {
+	if err := change(doc); err != nil {
 		return err
 	}
 	next, err := json.MarshalIndent(doc, "", "  ")
@@ -355,8 +397,9 @@ func main() {
 	cfg := flag.String("c", "", "config file")
 	port := flag.String("port", "8765", "port on 127.0.0.1")
 	who := flag.String("who", "", "name recorded when you mark a function as read")
-	base := flag.String("b", "", "baseline file for the gate")
-	vulns := flag.String("vulndb", "", "folder for the vulnerability data; enables the update button")
+	base := flag.String("b", "", "baseline file for the gate; default limator-baseline.json beside the config")
+	lang := flag.String("lang", "en", "language of the page: en or nl")
+	vulns := flag.String("vulndb", "", "folder for the vulnerability data; default the vuln_db of the config")
 	bin := flag.String("bin", scanner, "path of the limator scanner")
 	flag.Parse()
 	abs, err := filepath.Abs(*dir)
@@ -378,7 +421,7 @@ func main() {
 	}
 	store := filepath.Join(home, "limator")
 	s := &server{dir: abs, cfg: *cfg, who: *who, base: *base, vulns: *vulns, token: hex.EncodeToString(raw),
-		host: "127.0.0.1:" + *port, work: work, store: store, bin: *bin, fresh: map[string]bool{}, updater: beside("limator-update")}
+		host: "127.0.0.1:" + *port, work: work, store: store, lang: *lang, bin: *bin, fresh: map[string]bool{}, updater: beside("limator-update")}
 	s.run = func(bin string, args ...string) (string, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
@@ -469,24 +512,57 @@ func (s *server) line(w http.ResponseWriter, r *http.Request) {
 	if !s.allowed(w, r) {
 		return
 	}
-	file := filepath.FromSlash(r.URL.Query().Get("file"))
-	n, err := strconv.Atoi(r.URL.Query().Get("line"))
-	if err != nil || n < 1 || !filepath.IsLocal(file) {
-		http.Error(w, "file and line required", http.StatusBadRequest)
+	s.mu.Lock()
+	lines, at, err := s.source(r.URL.Query().Get("file"), r.URL.Query().Get("line"))
+	s.mu.Unlock()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.mu.Lock()
-	dir := s.dir
-	s.mu.Unlock()
-	raw, err := os.ReadFile(filepath.Join(dir, file))
+	from, to := max(at-2, 0), min(at+3, len(lines))
+	writeJSON(w, map[string]any{"start": from + 1, "lines": lines[from:to]})
+}
+
+func (s *server) source(file, line string) ([]string, int, error) {
+	file = filepath.FromSlash(file)
+	n, err := strconv.Atoi(line)
+	if err != nil || n < 1 || !filepath.IsLocal(file) {
+		return nil, 0, fmt.Errorf("file and line required")
+	}
+	raw, err := os.ReadFile(filepath.Join(s.dir, file))
 	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
+		return nil, 0, fmt.Errorf("file not found")
 	}
 	lines := strings.Split(strings.ReplaceAll(string(raw), "\r", ""), "\n")
-	from, to := max(n-3, 0), min(n+2, len(lines))
-	if from > to {
-		from = to
+	if n > len(lines) {
+		return nil, 0, fmt.Errorf("the file has no line %d", n)
 	}
-	writeJSON(w, map[string]any{"start": from + 1, "lines": lines[from:to]})
+	return lines, n - 1, nil
+}
+
+func (s *server) basePath() string {
+	if s.base != "" {
+		return s.base
+	}
+	return filepath.Join(filepath.Dir(s.configPath()), "limator-baseline.json")
+}
+
+func (s *server) vulnDir() string {
+	if s.vulns != "" {
+		return s.vulns
+	}
+	raw, err := os.ReadFile(s.configPath())
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		VulnDB string `json:"vuln_db"`
+	}
+	if json.Unmarshal(raw, &doc) != nil || doc.VulnDB == "" {
+		return ""
+	}
+	if filepath.IsAbs(doc.VulnDB) {
+		return doc.VulnDB
+	}
+	return filepath.Join(filepath.Dir(s.configPath()), doc.VulnDB)
 }

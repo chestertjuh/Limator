@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.13.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.14.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -91,17 +91,28 @@ limator-ui -dir /full/path/to/myproject -who yourname
 | Tab | What it does |
 |---|---|
 | Overview | counts per rule, the report hash, scan again, check the gate, fetch vulnerability data |
-| Findings | every finding, filtered by rule, level and text; show the code around it; record an exception with a reason |
-| Fix | every change the fix would make, before and after; apply it; undo the last fix |
+| Findings | every finding, filtered by rule, level and text; show the code around it; accept one line or the whole file with a reason |
+| Security | secrets, risky calls and known vulnerabilities on their own |
+| Fix | every change the fix would make, before and after, for Go and for TypeScript and JavaScript line comments; apply it; undo the last fix |
 | Review | the matches the fix leaves alone, for rewriting by hand; keep a line as it is (remembered), skip it for now, or accept the whole file |
 | Reading list | the functions most worth reading; mark one as read |
+| Headers | Go files without a leading comment, with a suggestion; add your own line |
 | Audit | the audit summary |
 | Inventory | dependencies with their licenses |
 | Reports and folder | download the HTML, SARIF and JSON reports, the audit, the inventory and the CycloneDX file; open another folder |
 
-Flags: `-c config`, `-who name` (recorded with a read mark), `-b baseline.json` (enables the gate button), `-vulndb folder` (enables the update button, which runs `limator-update`), `-port`, `-bin`.
+Flags: `-c config`, `-who name` (recorded with a read mark), `-lang en|nl`, `-b baseline.json` (default `limator-baseline.json` beside the config), `-vulndb folder` (default the `vuln_db` of the config; the update button sets one up when there is none), `-port`, `-bin`. The overview can also write a pre-commit hook that runs the gate on every commit.
 
 It listens on 127.0.0.1 only and prints a link with a random token. Requests without the token, with another Host or from another origin are refused. The page loads nothing from outside and carries a content security policy. Applying a fix and undoing one ask for confirmation, and a preview never writes. It starts the scanner as a separate process, so the scanner itself still contains no network code.
+## Keeping it clean
+
+`limator hook <dir>` writes a git pre-commit hook that runs the gate, so a commit that adds findings is stopped. It leaves a hook it did not write alone. For a nightly run, schedule `limator gate <dir> -b baseline.json` with the scheduler of the system.
+
+`limator headers <dir> -o headers.json` lists the Go files without a leading comment, each with a suggestion made from the names in the file. `limator header <dir> -f file.go -text "..."` adds the line you wrote, after proving the code is unchanged, and `limator undo` takes it back.
+
+An exception can cover one line: give it `"line"` with a piece of that source line, next to `rule`, `path` and `reason`. It keeps holding when the line moves.
+
+With `"fix_scope": "smart"` the fix also rewrites `//` comments that stand on their own line in TypeScript and JavaScript files. Block comments, comments behind code and anything the fix cannot prove unchanged are left for review.
 ## Inventory and audit
 
 `inventory` writes a register of every scanned file (path, line count, SHA-256, and the leading comment of Go files) and of every dependency found in `go.mod` and `package.json` files, with the license where it can be read locally. Go licenses are read from `vendor` or the module cache, npm licenses from `node_modules`. Nothing is downloaded; what cannot be read locally is listed as `unknown`. `-f cyclonedx` writes the dependencies as a CycloneDX 1.5 document.

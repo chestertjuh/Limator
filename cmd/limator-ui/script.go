@@ -1,12 +1,49 @@
 package main
 
 const script = `
-var statusBox = document.getElementById('status'), report = null, changes = null, deps = null, timer = null, shown = 300, keptSet = {}, skipped = {};
+var statusBox = document.getElementById('status'), report = null, changes = null, deps = null, timer = null, shown = 300;
+var keptSet = {}, skipped = {}, heads = null;
 function $(id) { return document.getElementById(id); }
+var nl = {
+  'Overview': 'Overzicht', 'Findings': 'Bevindingen', 'Security': 'Beveiliging', 'Fix': 'Herstel', 'Review': 'Nakijken',
+  'Reading list': 'Leeslijst', 'Headers': 'Kopregels', 'Audit': 'Audit', 'Inventory': 'Inventaris',
+  'Reports and folder': 'Rapporten en map', 'Scan again': 'Opnieuw scannen', 'Check gate': 'Poort controleren',
+  'Run the gate on every commit': 'Poort bij elke commit', 'Update vulnerability data': 'Kwetsbaarheidsgegevens bijwerken',
+  'Rules': 'Regels', 'All rules': 'Alle regels', 'All levels': 'Alle niveaus', 'high': 'hoog', 'medium': 'midden', 'low': 'laag',
+  'Preview fix': 'Voorvertoning', 'Apply fix': 'Herstel toepassen', 'Undo last fix': 'Laatste herstel terugdraaien',
+  'Load review list': 'Nakijklijst laden', 'Load reading list': 'Leeslijst laden', 'Load audit': 'Audit laden',
+  'Load inventory': 'Inventaris laden', 'Load files without a header': 'Bestanden zonder kopregel laden',
+  'Download': 'Downloaden', 'Folder': 'Map', 'Open folder': 'Map openen', 'Show': 'Tonen', 'Code': 'Code',
+  'Accept line': 'Regel accepteren', 'Accept file': 'Bestand accepteren', 'Keep as it is': 'Zo laten', 'Skip': 'Overslaan',
+  'Mark as read': 'Gelezen', 'Add header': 'Kopregel toevoegen', 'Ready.': 'Klaar.', 'Done.': 'Klaar.',
+  'No findings.': 'Geen bevindingen.', 'Nothing left to read.': 'Niets meer te lezen.', 'Nothing here.': 'Niets gevonden.',
+  'files': 'bestanden', 'findings': 'bevindingen', 'exceptions': 'uitzonderingen', 'hash': 'hash',
+  'Scanning': 'Bezig met scannen', 'Working out the fix': 'Herstel berekenen', 'Applying the fix': 'Herstel toepassen',
+  'Undoing': 'Terugdraaien', 'Marking': 'Markeren', 'Recording': 'Vastleggen', 'Adding exception': 'Uitzondering toevoegen',
+  'Building the reading list': 'Leeslijst opbouwen', 'Building the audit': 'Audit opbouwen',
+  'Building the inventory': 'Inventaris opbouwen', 'Looking for files without a header': 'Bestanden zonder kopregel zoeken',
+  'Checking the gate': 'Poort controleren', 'Installing the hook': 'Hook plaatsen', 'Adding the header': 'Kopregel toevoegen',
+  'Fetching vulnerability data': 'Kwetsbaarheidsgegevens ophalen', 'Opening folder': 'Map openen',
+  'Filter on path or message': 'Filter op pad of melding', 'Filter on path': 'Filter op pad',
+  'Filter on name or license': 'Filter op naam of licentie',
+  'Preview shows every change before anything is written.\nApply keeps a copy of each file; undo puts those back.':
+    'De voorvertoning toont elke wijziging voordat er iets wordt geschreven. Toepassen bewaart een kopie van elk bestand; terugdraaien zet die terug.',
+  'Secrets, risky calls and known vulnerabilities, taken from the same scan.':
+    'Geheimen, riskante aanroepen en bekende kwetsbaarheden, uit dezelfde scan.',
+  'One line at the top of a file saying what it is for. The suggestion is only a start; write your own.':
+    'Een regel bovenaan een bestand die zegt waarvoor het is. Het voorstel is een begin; schrijf je eigen tekst.',
+  'Apply the fix? This changes files on disk. A copy of every changed file is kept for undo.':
+    'Herstel toepassen? Dit wijzigt bestanden op schijf. Van elk gewijzigd bestand blijft een kopie bewaard.',
+  'Put back the files from the last fix? Files changed since then are left alone.':
+    'De bestanden van het laatste herstel terugzetten? Bestanden die daarna zijn gewijzigd blijven staan.',
+  'Write a pre-commit hook in this repository? Every commit then runs the gate.':
+    'Een pre-commit-hook in deze repository plaatsen? Elke commit draait dan de poort.'
+};
+function tr(text) { return lang === 'nl' && typeof text === 'string' && nl[text] ? nl[text] : text; }
 function el(tag, cls, text) {
   var e = document.createElement(tag);
   if (cls) e.className = cls;
-  if (text !== undefined && text !== null) e.textContent = text;
+  if (text !== undefined && text !== null) e.textContent = tr(text);
   return e;
 }
 function url(path) { return path + '?t=' + encodeURIComponent(token); }
@@ -16,10 +53,11 @@ function busy(on, what) {
   $('progress').className = on ? 'on' : '';
   if (!on) return;
   var start = Date.now();
+  what = tr(what);
   statusBox.textContent = what + '...';
   timer = setInterval(function () { statusBox.textContent = what + '... ' + Math.round((Date.now() - start) / 1000) + ' s'; }, 1000);
 }
-function done(text) { busy(false); statusBox.textContent = text; }
+function done(text) { busy(false); statusBox.textContent = tr(text); }
 function get(name, what) {
   busy(true, what);
   return fetch(url('/data/' + name)).then(function (r) {
@@ -43,18 +81,57 @@ function row(parts) {
 function fill(box, count, items, render, total) {
   box.textContent = '';
   items.slice(0, shown).forEach(function (item) { box.append(render(item)); });
-  count.textContent = 'Showing ' + Math.min(shown, items.length) + ' of ' + items.length +
-    (total !== undefined ? ' (' + total + ' in total)' : '') + '. Narrow the filter to see the rest.';
+  var some = Math.min(shown, items.length), all = total !== undefined ? total : items.length;
+  count.textContent = lang === 'nl' ?
+    some + ' van ' + items.length + ' getoond (' + all + ' in totaal). Maak het filter smaller om de rest te zien.' :
+    'Showing ' + some + ' of ' + items.length + ' (' + all + ' in total). Narrow the filter to see the rest.';
 }
 function has(text, needle) { return !needle || text.toLowerCase().indexOf(needle.toLowerCase()) >= 0; }
-function exceptButton(rule, file) {
-  var b = el('button', 'small', 'Exception');
-  b.onclick = function () {
-    var reason = window.prompt('Why is ' + rule + ' acceptable in ' + file + '? The reason is stored in the config.');
-    if (reason === null) return;
-    post('/except', {rule: rule, path: file, reason: reason}, 'Adding exception').then(function () { report = null; }, quiet);
-  };
-  return b;
+function exceptButton(rule, file, line) {
+  var box = el('span', 'bar');
+  [['Accept line', line], ['Accept file', '']].forEach(function (kind) {
+    var b = el('button', 'small', kind[0]);
+    b.onclick = function () {
+      var where = file + (kind[1] ? ':' + kind[1] : '');
+      var reason = window.prompt(tr('Why is this acceptable? The reason is stored in the config.') + ' ' + rule + ' ' + where);
+      if (reason === null) return;
+      post('/except', {rule: rule, path: file, line: kind[1], reason: reason}, 'Adding exception').then(function () { report = null; }, quiet);
+    };
+    box.append(b);
+  });
+  return box;
+}
+function findingRow(f, levels) {
+  var r = row([el('span', 'id', f.rule), el('span', 'where', f.file + ':' + f.line), el('span', 'dim', levels[f.rule] || '')]);
+  r.append(codeButton(r, f.file, f.line), exceptButton(f.rule, f.file, f.line), el('span', 'code dim', f.msg));
+  return r;
+}
+function security() {
+  var levels = report.levels || {}, counts = {}, cards = $('scards');
+  var items = (report.findings || []).filter(function (f) { return levels[f.rule] === 'high'; });
+  items.forEach(function (f) { counts[f.rule] = (counts[f.rule] || 0) + 1; });
+  cards.textContent = '';
+  (report.rules || []).forEach(function (rule) { if (counts[rule.id]) cards.append(card(rule.id + ' ' + rule.name, counts[rule.id])); });
+  fill($('slist'), $('scount'), items, function (f) { return findingRow(f, levels); });
+  if (!items.length) $('slist').append(el('div', 'dim', 'Nothing here.'));
+}
+function headerList() {
+  if (!heads) return;
+  var needle = $('hpath').value;
+  var items = heads.filter(function (h) { return has(h.file, needle); });
+  fill($('hlist'), $('hcount'), items, function (h) {
+    var add = el('button', 'small', 'Add header'), r = row([el('span', 'where', h.file), add, el('span', 'code dim', h.suggestion)]);
+    add.onclick = function () {
+      var text = window.prompt(tr('One line saying what this file is for:') + ' ' + h.file, h.suggestion);
+      if (!text) return;
+      post('/run', {a: 'header', file: h.file, text: text}, 'Adding the header').then(function () {
+        heads = heads.filter(function (x) { return x !== h; });
+        report = null;
+        r.remove();
+      }, quiet);
+    };
+    return r;
+  });
 }
 function codeButton(r, file, line) {
   var b = el('button', 'small', 'Code');
@@ -77,10 +154,10 @@ function codeButton(r, file, line) {
 function show(tab) {
   document.querySelectorAll('main section').forEach(function (s) { s.hidden = s.id !== tab; });
   document.querySelectorAll('#tabs button').forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === tab); });
-  if ((tab === 'overview' || tab === 'findings') && !report) loadReport();
+  if ((tab === 'overview' || tab === 'findings' || tab === 'security') && !report) loadReport();
 }
 function loadReport() {
-  return get('report', 'Scanning').then(function (data) { report = data; overview(); findings(); }, quiet);
+  return get('report', 'Scanning').then(function (data) { report = data; overview(); findings(); security(); }, quiet);
 }
 function card(label, value) {
   var c = el('div', 'card');
@@ -113,9 +190,7 @@ function findings() {
     return (!rule || f.rule === rule) && (!level || levels[f.rule] === level) && has(f.file + ' ' + f.msg, needle);
   });
   fill($('flist'), $('fcount'), items, function (f) {
-    var r = row([el('span', 'id', f.rule), el('span', 'where', f.file + ':' + f.line), el('span', 'dim', levels[f.rule] || '')]);
-    r.append(codeButton(r, f.file, f.line), exceptButton(f.rule, f.file), el('span', 'code dim', f.msg));
-    return r;
+    return findingRow(f, levels);
   }, (report.findings || []).length);
 }
 function loadChanges() {
@@ -137,8 +212,10 @@ function changeList() {
     return row([el('span', 'id', c.kind), el('span', 'where', c.file + ':' + c.line),
       el('span', 'code old', c.before), c.after ? el('span', 'code new', c.after) : null]);
   });
-  $('ccount').textContent = changes.files + ' files, ' + changes.cleaned + ' rewritten, ' + changes.removed + ' removed, ' +
-    changes.review + ' left for review, ' + changes.skipped + ' skipped. ' + $('ccount').textContent;
+  var words = lang === 'nl' ? [' bestanden, ', ' herschreven, ', ' verwijderd, ', ' om na te kijken, ', ' overgeslagen. '] :
+    [' files, ', ' rewritten, ', ' removed, ', ' left for review, ', ' skipped. '];
+  $('ccount').textContent = changes.files + words[0] + changes.cleaned + words[1] + changes.removed + words[2] +
+    changes.review + words[3] + changes.skipped + words[4] + $('ccount').textContent;
 }
 function reviewList() {
   if (!changes) return;
@@ -156,7 +233,7 @@ function reviewList() {
       }, quiet);
     };
     skip.onclick = function () { skipped[c.file + ':' + c.line] = true; r.remove(); };
-    r.append(codeButton(r, c.file, c.line), keep, skip, exceptButton('L001', c.file), el('span', 'code', c.before));
+    r.append(codeButton(r, c.file, c.line), keep, skip, exceptButton('L001', c.file, c.line), el('span', 'code', c.before));
     return r;
   });
 }
@@ -200,13 +277,12 @@ function inventory() {
   });
 }
 function confirmRun(action, question, what) {
-  if (!window.confirm(question)) return;
+  if (!window.confirm(tr(question))) return;
   post('/run', {a: action, confirm: 'yes'}, what).then(function () { report = null; changes = null;
     $('clist').textContent = ''; $('rlist').textContent = ''; }, quiet);
 }
 document.querySelectorAll('#tabs button').forEach(function (b) { b.onclick = function () { show(b.dataset.tab); }; });
 $('scan').onclick = function () { post('/run', {a: 'scan'}, 'Scanning').then(loadReport, quiet); };
-$('gate').hidden = !hasGate;
 $('update').hidden = !hasUpdate;
 $('gate').onclick = function () { post('/run', {a: 'gate'}, 'Checking the gate').then(quiet, quiet); };
 $('update').onclick = function () { post('/run', {a: 'update'}, 'Fetching vulnerability data').then(function () { report = null; }, quiet); };
@@ -232,5 +308,18 @@ $('ipath').oninput = inventory;
 $('open').onclick = function () {
   post('/dir', {dir: $('dir').value, cfg: $('cfg').value}, 'Opening folder').then(function () { window.location.reload(); }, quiet);
 };
+$('hook').onclick = function () {
+  confirmRun('hook', 'Write a pre-commit hook in this repository? Every commit then runs the gate.', 'Installing the hook');
+};
+$('hload').onclick = function () {
+  get('headers', 'Looking for files without a header').then(function (list) { heads = list; headerList(); }, quiet);
+};
+$('hpath').oninput = headerList;
+if (lang === 'nl') {
+  document.querySelectorAll('button, h2, option, main .dim, #status').forEach(function (e) {
+    if (!e.children.length && nl[e.textContent]) e.textContent = nl[e.textContent];
+  });
+  document.querySelectorAll('input[placeholder]').forEach(function (e) { e.placeholder = tr(e.placeholder); });
+}
 show('overview');
 `

@@ -3,7 +3,7 @@ package main
 import "html/template"
 
 var page = template.Must(template.New("page").Parse(`<!doctype html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -59,9 +59,11 @@ section[hidden]{display:none}
 <nav role="tablist" id="tabs">
 <button role="tab" data-tab="overview">Overview</button>
 <button role="tab" data-tab="findings">Findings</button>
+<button role="tab" data-tab="security">Security</button>
 <button role="tab" data-tab="fix">Fix</button>
 <button role="tab" data-tab="review">Review</button>
 <button role="tab" data-tab="reading">Reading list</button>
+<button role="tab" data-tab="headers">Headers</button>
 <button role="tab" data-tab="audit">Audit</button>
 <button role="tab" data-tab="inventory">Inventory</button>
 <button role="tab" data-tab="files">Reports and folder</button>
@@ -70,7 +72,8 @@ section[hidden]{display:none}
 <div id="status" aria-live="polite">Ready.</div>
 <main>
 <section id="overview">
-<div class="bar"><button id="scan">Scan again</button><button id="gate">Check gate</button><button id="update">Update vulnerability data</button></div>
+<div class="bar"><button id="scan">Scan again</button><button id="gate">Check gate</button>
+<button id="hook">Run the gate on every commit</button><button id="update">Update vulnerability data</button></div>
 <div class="cards" id="cards"></div>
 <h2>Rules</h2><div id="rules"></div>
 </section>
@@ -79,6 +82,14 @@ section[hidden]{display:none}
 <select id="flevel" aria-label="Level"><option value="">All levels</option><option>high</option><option>medium</option><option>low</option></select>
 <input class="wide" id="fpath" placeholder="Filter on path or message" aria-label="Filter"></div>
 <div class="dim" id="fcount"></div><div id="flist"></div>
+</section>
+<section id="security" hidden>
+<div class="dim" id="scount">Secrets, risky calls and known vulnerabilities, taken from the same scan.</div>
+<div class="cards" id="scards"></div><div id="slist"></div>
+</section>
+<section id="headers" hidden>
+<div class="bar"><button id="hload">Load files without a header</button><input class="wide" id="hpath" placeholder="Filter on path" aria-label="Filter"></div>
+<div class="dim" id="hcount">One line at the top of a file saying what it is for. The suggestion is only a start; write your own.</div><div id="hlist"></div>
 </section>
 <section id="fix" hidden>
 <div class="bar"><button id="preview">Preview fix</button><button id="apply" class="danger">Apply fix</button>
@@ -111,7 +122,7 @@ Rewrite them by hand. Keep as it is remembers the line, Skip hides it for now, E
 </section>
 </main>
 <script nonce="{{.Nonce}}">
-var token = {{.Token}}, hasGate = {{.Gate}}, hasUpdate = {{.Update}};
+var token = {{.Token}}, hasUpdate = {{.Update}}, lang = {{.Lang}};
 </script>
 <script nonce="{{.Nonce}}">` + script + `</script>
 </body>

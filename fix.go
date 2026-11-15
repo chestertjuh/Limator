@@ -341,7 +341,7 @@ func fixAll(root string, cfg Config, dry bool, out string) error {
 	}
 	var entries []entry
 	for _, e := range all {
-		if filepath.Ext(e.abs) == ".go" {
+		if filepath.Ext(e.abs) == ".go" || tsExt[filepath.Ext(e.abs)] {
 			entries = append(entries, e)
 		}
 	}
@@ -349,8 +349,12 @@ func fixAll(root string, cfg Config, dry bool, out string) error {
 		res fixResult
 		src []byte
 	}
-	results, err := mapFiles(entries, func(_ int, _ entry, src []byte) done {
-		res, err := fixFile(src, cfg)
+	results, err := mapFiles(entries, func(_ int, e entry, src []byte) done {
+		fix := fixFile
+		if tsExt[filepath.Ext(e.abs)] {
+			fix = fixTS
+		}
+		res, err := fix(src, cfg)
 		res.err = err
 		if res.removed == 0 && res.cleaned == 0 {
 			return done{res: res}

@@ -781,3 +781,78 @@ func TestFixSmartKeepsIdentifierCase(t *testing.T) {
 		t.Fatalf("%v, got:\n%s", err, res.out)
 	}
 }
+
+func TestLineExceptionCoversOneLine(t *testing.T) {
+	dir := t.TempDir()
+	src := "package p\n\n// TICKET-1 stays\n// TICKET-2 goes\nvar A = 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := fixCfg("smart")
+	cfg.Extensions, cfg.MaxFileLines, cfg.MaxLineLength = []string{".go"}, 1000, 160
+	cfg.Exceptions = []Exception{{Rule: "L001", Path: "a.go", Reason: "kept on purpose", Line: "TICKET-1 stays"}}
+	rep, err := scan(dir, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Counts["L001"] != 1 || rep.Suppressed["L001"] != 1 || rep.Exceptions[0].Used != 1 {
+		t.Fatalf("counts %v suppressed %v used %d", rep.Counts, rep.Suppressed, rep.Exceptions[0].Used)
+	}
+}
+
+func TestFixTSRewritesOnlyComments(t *testing.T) {
+	src := "// TICKET-1: the list is sorted\nconst a = \"// TICKET-2: not a comment\";\nconst b = 1; // TICKET-3: trailing\n// kept since TICKET-4 broke it\n"
+	want := "// The list is sorted\nconst a = \"// TICKET-2: not a comment\";\nconst b = 1; // TICKET-3: trailing\n// kept since TICKET-4 broke it\n"
+	res, err := fixTS([]byte(src), fixCfg("smart"))
+	if err != nil || string(res.out) != want || res.cleaned != 1 || res.review != 2 {
+		t.Fatalf("%v cleaned %d review %d got:\n%s", err, res.cleaned, res.review, res.out)
+	}
+}
+
+func TestHeaderIsAddedAndProven(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.go")
+	if err := os.WriteFile(file, []byte("package p\n\nfunc Add(a, b int) int { return a + b }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := suggestHeader("a.go", []byte("package p\n\nfunc Add() {}\n")); got != "a.go holds Add." {
+		t.Fatalf("suggestion %q", got)
+	}
+	if err := addHeader(dir, "a.go", "a.go adds numbers."); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(file)
+	if err != nil || !strings.HasPrefix(string(got), "// a.go adds numbers.\n\npackage p\n") {
+		t.Fatalf("%v got:\n%s", err, got)
+	}
+	if err := addHeader(dir, "a.go", "again"); err == nil {
+		t.Fatal("a second header must be refused")
+	}
+	if err := addHeader(dir, "../b.go", "outside"); err == nil {
+		t.Fatal("a path outside the folder must be refused")
+	}
+}
+
+func TestHookRefusesAForeignHook(t *testing.T) {
+	dir := t.TempDir()
+	hooks := filepath.Join(dir, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := installHook(dir, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(hooks, "pre-commit"))
+	if err != nil || !strings.Contains(string(got), hookMark) || !strings.Contains(string(got), " gate ") {
+		t.Fatalf("%v got:\n%s", err, got)
+	}
+	if err := installHook(dir, "", ""); err != nil {
+		t.Fatalf("our own hook may be rewritten: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hooks, "pre-commit"), []byte("#!/bin/sh\necho mine\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := installHook(dir, "", ""); err == nil {
+		t.Fatal("a hook somebody else wrote must be left alone")
+	}
+}
