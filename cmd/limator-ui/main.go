@@ -1,147 +1,58 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
-	"html/template"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 type server struct {
-	dir, cfg, who, token, host, work string
-	mu                               sync.Mutex
-	run                              func(args ...string) (string, error)
+	mu                         sync.Mutex
+	dir, cfg, who, base, vulns string
+	token, host, work          string
+	bin, updater               string
+	run                        func(bin string, args ...string) (string, error)
 }
 
-var page = template.Must(template.New("page").Parse(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Limator</title>
-<style>
-:root{--bg:#0d1416;--panel:#131d20;--line:#1f3a3d;--teal:#0f4c4f;--text:#e6f0f0;--dim:#9fb3b5;--accent:#5fd4c8;--warn:#7a2e22}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}
-header{padding:16px 24px;border-bottom:1px solid var(--line)}
-h1{margin:0;font-size:20px}
-.meta{color:var(--dim);word-break:break-all}
-.bar{display:flex;flex-wrap:wrap;gap:8px;padding:12px 24px}
-button{min-height:44px;padding:8px 16px;background:var(--teal);border:1px solid var(--line);border-radius:6px}
-button{color:var(--text);cursor:pointer;font:inherit}
-button.danger{background:var(--warn)}
-button:disabled{opacity:.5;cursor:wait}
-pre,#panel{margin:0 24px 12px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
-pre{white-space:pre-wrap;word-break:break-word;max-height:40vh;overflow:auto}
-#panel:empty{display:none}
-.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
-.row:last-child{border-bottom:0}
-.score{min-width:48px;font-variant-numeric:tabular-nums;color:var(--accent)}
-.where{flex:1;min-width:200px;word-break:break-all}
-.dim{color:var(--dim)}
-iframe{display:block;width:100%;height:80vh;border:0;border-top:1px solid var(--line)}
-</style>
-</head>
-<body>
-<header><h1>Limator</h1><div class="meta">{{.Dir}}</div></header>
-<div class="bar">
-<button id="scan">Scan again</button>
-<button id="list">Reading list</button>
-<button id="audit">Audit</button>
-<button id="preview">Preview fix</button>
-<button id="fix" class="danger">Apply fix</button>
-</div>
-<pre id="out" aria-live="polite">Ready.</pre>
-<div id="panel"></div>
-<iframe id="report" title="Report" src="/report?t={{.Token}}"></iframe>
-<script>
-var token = {{.Token}}, out = document.getElementById('out'), panel = document.getElementById('panel');
-var buttons = document.querySelectorAll('.bar button');
-function el(tag, cls, text) {
-  var e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
+type exception struct {
+	Rule   string `json:"rule"`
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
-function busy(on) { buttons.forEach(function (b) { b.disabled = on; }); }
-function url(path) { return path + '?t=' + encodeURIComponent(token); }
-function post(body) {
-  return fetch(url('/run'), {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body})
-    .then(function (r) { return r.text(); });
-}
-function run(action, question) {
-  if (question && !window.confirm(question)) return;
-  busy(true);
-  out.textContent = 'Running ' + action + '...';
-  post('a=' + action + (question ? '&confirm=yes' : '')).then(function (text) {
-    out.textContent = text;
-    document.getElementById('report').src = url('/report') + '&n=' + Date.now();
-  }).catch(function (e) { out.textContent = 'Failed: ' + e; }).then(function () { busy(false); });
-}
-function load(path, render) {
-  busy(true);
-  out.textContent = 'Loading...';
-  fetch(url(path)).then(function (r) {
-    if (!r.ok) return r.text().then(function (t) { throw new Error(t); });
-    return r.json();
-  }).then(function (data) { panel.textContent = ''; render(data); out.textContent = 'Done.'; })
-    .catch(function (e) { out.textContent = 'Failed: ' + e.message; }).then(function () { busy(false); });
-}
-function readingList(units) {
-  if (!units.length) panel.append(el('div', 'dim', 'Nothing left to read.'));
-  units.forEach(function (u) {
-    var row = el('div', 'row'), mark = el('button', '', 'Mark as read');
-    row.append(el('span', 'score', u.score), el('span', 'where', u.file + ':' + u.line + '  ' + u.func),
-      el('span', 'dim', (u.sensitive || []).join(' ') + '  complexity ' + u.complexity + ', findings ' + u.findings), mark);
-    mark.onclick = function () {
-      mark.disabled = true;
-      post('a=read&file=' + encodeURIComponent(u.file) + '&fn=' + encodeURIComponent(u.func)).then(function (text) {
-        out.textContent = text;
-        row.remove();
-      });
-    };
-    panel.append(row);
-  });
-}
-function fact(name, value) {
-  var row = el('div', 'row');
-  row.append(el('span', 'where', name), el('span', '', value));
-  panel.append(row);
-}
-function auditView(a) {
-  var r = a.reading || {};
-  fact('Version', a.version);
-  fact('Files / lines', a.files + ' / ' + a.lines);
-  fact('Dependencies', a.dependencies);
-  fact('Licenses', Object.keys(a.licenses || {}).sort().map(function (k) { return k + ' ' + a.licenses[k]; }).join(', '));
-  fact('Functions read', r.functions_read + ' of ' + r.functions);
-  fact('Sensitive functions read', r.sensitive_functions_read + ' of ' + r.sensitive_functions);
-  fact('AI-written functions read', r.ai_functions_read + ' of ' + r.ai_functions);
-  (a.rules || []).forEach(function (rule) {
-    var n = (a.counts || {})[rule.id] || 0;
-    if (n) fact(rule.id + ' ' + rule.name, n);
-  });
-  fact('Exceptions', (a.exceptions || []).length);
-  fact('Hash', a.hash);
-}
-document.getElementById('scan').onclick = function () { run('scan'); };
-document.getElementById('preview').onclick = function () { run('preview'); };
-document.getElementById('fix').onclick = function () { run('fix', 'Apply the fix? This changes files on disk.'); };
-document.getElementById('list').onclick = function () { load('/readlist', readingList); };
-document.getElementById('audit').onclick = function () { load('/audit', auditView); };
-</script>
-</body>
-</html>
-`))
+
+var (
+	ruleID = regexp.MustCompile(`^[A-Z]+[0-9]+$`)
+
+	documents = map[string][]string{
+		"report":    {"report", "-f", "json"},
+		"changes":   {"fix", "-n", "yes"},
+		"readlist":  {"readlist", "-n", "200"},
+		"audit":     {"audit"},
+		"inventory": {"inventory"},
+	}
+
+	downloads = map[string][]string{
+		"report.html":    {"report", "-f", "html"},
+		"report.sarif":   {"report", "-f", "sarif"},
+		"report.json":    {"report", "-f", "json"},
+		"audit.json":     {"audit"},
+		"inventory.json": {"inventory"},
+		"bom.json":       {"inventory", "-f", "cyclonedx"},
+	}
+)
 
 func (s *server) args(cmd string, extra ...string) []string {
 	a := []string{cmd, s.dir}
@@ -151,83 +62,48 @@ func (s *server) args(cmd string, extra ...string) []string {
 	return append(a, extra...)
 }
 
+func (s *server) configPath() string {
+	if s.cfg != "" {
+		return s.cfg
+	}
+	return filepath.Join(s.dir, "limator.json")
+}
+
 func (s *server) allowed(w http.ResponseWriter, r *http.Request) bool {
 	t := r.URL.Query().Get("t")
 	if r.Host != s.host || subtle.ConstantTimeCompare([]byte(t), []byte(s.token)) != 1 {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return false
 	}
+	if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+s.host {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Cache-Control", "no-store")
 	return true
 }
 
-func (s *server) home(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
+func (s *server) posted(w http.ResponseWriter, r *http.Request) bool {
 	if !s.allowed(w, r) {
-		return
+		return false
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := page.Execute(w, map[string]string{"Dir": s.dir, "Token": s.token}); err != nil {
-		fmt.Fprintln(os.Stderr, "limator-ui:", err)
+	if r.Method != http.MethodPost {
+		http.Error(w, "use POST", http.StatusMethodNotAllowed)
+		return false
 	}
-}
-
-func (s *server) document(name string, cmd ...string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.allowed(w, r) {
-			return
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		file := filepath.Join(s.work, name)
-		if out, err := s.run(s.args(cmd[0], append(cmd[1:], "-o", file)...)...); err != nil {
-			http.Error(w, out+"\n"+err.Error(), http.StatusInternalServerError)
-			return
-		}
-		http.ServeFile(w, r, file)
-	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	return true
 }
 
 func plain(v string) bool {
 	return v != "" && !strings.HasPrefix(v, "-")
 }
 
-func (s *server) action(w http.ResponseWriter, r *http.Request) {
-	if !s.allowed(w, r) {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "use POST", http.StatusMethodNotAllowed)
-		return
-	}
-	var args []string
-	switch r.FormValue("a") {
-	case "scan":
-		args = s.args("scan")
-	case "preview":
-		args = s.args("fix", "-n", "yes")
-	case "fix":
-		if r.FormValue("confirm") != "yes" {
-			http.Error(w, "confirmation required", http.StatusBadRequest)
-			return
-		}
-		args = s.args("fix")
-	case "read":
-		file, fn := r.FormValue("file"), r.FormValue("fn")
-		if !plain(file) || !plain(fn) {
-			http.Error(w, "file and function required", http.StatusBadRequest)
-			return
-		}
-		args = s.args("read", "-who", s.who, "-f", file, "-fn", fn)
-	default:
-		http.Error(w, "unknown action", http.StatusBadRequest)
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out, err := s.run(args...)
+func reply(w http.ResponseWriter, out string, err error) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -238,18 +114,204 @@ func (s *server) action(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *server) home(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	if !s.allowed(w, r) {
+		return
+	}
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		http.Error(w, "no random source", http.StatusInternalServerError)
+		return
+	}
+	nonce := hex.EncodeToString(raw)
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; connect-src 'self'; style-src 'nonce-"+nonce+"'; "+
+		"script-src 'nonce-"+nonce+"'; base-uri 'none'; form-action 'none'")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.mu.Lock()
+	data := map[string]any{"Dir": s.dir, "Cfg": s.configPath(), "Token": s.token, "Nonce": nonce,
+		"Who": s.who, "Gate": s.base != "", "Update": s.vulns != "" && s.updater != ""}
+	s.mu.Unlock()
+	if err := page.Execute(w, data); err != nil {
+		fmt.Fprintln(os.Stderr, "limator-ui:", err)
+	}
+}
+
+func (s *server) produce(name string, cmd []string) (string, string, error) {
+	file := filepath.Join(s.work, name)
+	out, err := s.run(s.bin, s.args(cmd[0], append(append([]string{}, cmd[1:]...), "-o", file)...)...)
+	return file, out, err
+}
+
+func (s *server) data(w http.ResponseWriter, r *http.Request) {
+	if !s.allowed(w, r) {
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/data/")
+	cmd, ok := documents[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, out, err := s.produce(name+".json", cmd)
+	if err != nil {
+		http.Error(w, out+"\n"+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.ServeFile(w, r, file)
+}
+
+func (s *server) download(w http.ResponseWriter, r *http.Request) {
+	if !s.allowed(w, r) {
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/download/")
+	cmd, ok := downloads[name]
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, out, err := s.produce("download-"+name, cmd)
+	if err != nil {
+		http.Error(w, out+"\n"+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Disposition", `attachment; filename="limator-`+name+`"`)
+	http.ServeFile(w, r, file)
+}
+
+func (s *server) action(w http.ResponseWriter, r *http.Request) {
+	if !s.posted(w, r) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	bin := s.bin
+	var args []string
+	switch r.FormValue("a") {
+	case "scan":
+		args = s.args("scan")
+	case "fix", "undo":
+		if r.FormValue("confirm") != "yes" {
+			http.Error(w, "confirmation required", http.StatusBadRequest)
+			return
+		}
+		args = s.args(r.FormValue("a"))
+	case "read":
+		file, fn := r.FormValue("file"), r.FormValue("fn")
+		if !plain(file) || !plain(fn) || !plain(s.who) {
+			http.Error(w, "file, function and a -who name are required", http.StatusBadRequest)
+			return
+		}
+		args = s.args("read", "-who", s.who, "-f", file, "-fn", fn)
+	case "gate":
+		if s.base == "" {
+			http.Error(w, "start limator-ui with -b baseline.json", http.StatusBadRequest)
+			return
+		}
+		args = s.args("gate", "-b", s.base)
+	case "update":
+		if s.vulns == "" || s.updater == "" {
+			http.Error(w, "start limator-ui with -vulndb folder", http.StatusBadRequest)
+			return
+		}
+		bin, args = s.updater, []string{"vulndb", "-dir", s.vulns}
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	out, err := s.run(bin, args...)
+	reply(w, out, err)
+}
+
+func (s *server) except(w http.ResponseWriter, r *http.Request) {
+	if !s.posted(w, r) {
+		return
+	}
+	e := exception{r.FormValue("rule"), r.FormValue("path"), strings.TrimSpace(r.FormValue("reason"))}
+	if !ruleID.MatchString(e.Rule) || !plain(e.Path) || len(e.Reason) < 10 {
+		http.Error(w, "a rule, a path and a reason of at least 10 characters are required", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	reply(w, "exception added for "+e.Rule+" in "+e.Path, addException(s.configPath(), e))
+}
+
+func addException(file string, e exception) error {
+	doc := map[string]json.RawMessage{}
+	raw, err := os.ReadFile(file)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return fmt.Errorf("config does not parse: %v", err)
+		}
+	}
+	var list []json.RawMessage
+	if cur, ok := doc["exceptions"]; ok {
+		if err := json.Unmarshal(cur, &list); err != nil {
+			return fmt.Errorf("exceptions in the config do not parse: %v", err)
+		}
+	}
+	item, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if doc["exceptions"], err = json.Marshal(append(list, item)); err != nil {
+		return err
+	}
+	next, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := file + ".limator-tmp"
+	if err := os.WriteFile(tmp, append(next, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, file)
+}
+
+func (s *server) folder(w http.ResponseWriter, r *http.Request) {
+	if !s.posted(w, r) {
+		return
+	}
+	dir, cfg := r.FormValue("dir"), r.FormValue("cfg")
+	info, err := os.Stat(dir)
+	if !plain(dir) || !filepath.IsAbs(dir) || err != nil || !info.IsDir() {
+		http.Error(w, "give the full path of an existing folder", http.StatusBadRequest)
+		return
+	}
+	if cfg != "" && (!plain(cfg) || !filepath.IsAbs(cfg) || !fileExists(cfg)) {
+		http.Error(w, "give the full path of an existing config file, or leave it empty", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	s.dir, s.cfg = filepath.Clean(dir), cfg
+	s.mu.Unlock()
+	reply(w, "folder set to "+dir, nil)
+}
+
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.home)
-	mux.HandleFunc("/report", s.document("report.html", "report", "-f", "html"))
-	mux.HandleFunc("/readlist", s.document("readlist.json", "readlist", "-n", "50"))
-	mux.HandleFunc("/audit", s.document("audit.json", "audit"))
+	mux.HandleFunc("/data/", s.data)
+	mux.HandleFunc("/download/", s.download)
 	mux.HandleFunc("/run", s.action)
+	mux.HandleFunc("/except", s.except)
+	mux.HandleFunc("/dir", s.folder)
 	return mux
 }
 
-func scanner() string {
-	name := "limator"
+func beside(name string) string {
 	if self, err := os.Executable(); err == nil {
 		for _, c := range []string{name, name + ".exe"} {
 			if p := filepath.Join(filepath.Dir(self), c); fileExists(p) {
@@ -257,7 +319,7 @@ func scanner() string {
 			}
 		}
 	}
-	return name
+	return ""
 }
 
 func fileExists(p string) bool {
@@ -271,13 +333,20 @@ func fail(err error) {
 }
 
 func main() {
-	dir := flag.String("dir", "", "folder to scan (required)")
+	scanner := beside("limator")
+	if scanner == "" {
+		scanner = "limator"
+	}
+	dir := flag.String("dir", "", "folder to scan (required, full path)")
 	cfg := flag.String("c", "", "config file")
 	port := flag.String("port", "8765", "port on 127.0.0.1")
-	who := flag.String("who", "", "name recorded when you mark a function as read (required for marking)")
-	bin := flag.String("bin", scanner(), "path of the limator scanner")
+	who := flag.String("who", "", "name recorded when you mark a function as read")
+	base := flag.String("b", "", "baseline file for the gate")
+	vulns := flag.String("vulndb", "", "folder for the vulnerability data; enables the update button")
+	bin := flag.String("bin", scanner, "path of the limator scanner")
 	flag.Parse()
-	if *dir == "" {
+	abs, err := filepath.Abs(*dir)
+	if *dir == "" || err != nil {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -289,9 +358,12 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	s := &server{dir: *dir, cfg: *cfg, who: *who, token: hex.EncodeToString(raw), host: "127.0.0.1:" + *port, work: work}
-	s.run = func(args ...string) (string, error) {
-		out, err := exec.Command(*bin, args...).CombinedOutput()
+	s := &server{dir: abs, cfg: *cfg, who: *who, base: *base, vulns: *vulns, token: hex.EncodeToString(raw),
+		host: "127.0.0.1:" + *port, work: work, bin: *bin, updater: beside("limator-update")}
+	s.run = func(bin string, args ...string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
 		return string(out), err
 	}
 	ln, err := net.Listen("tcp", s.host)
@@ -299,5 +371,6 @@ func main() {
 		fail(err)
 	}
 	fmt.Printf("limator-ui: open http://%s/?t=%s\n", s.host, s.token)
-	fail(http.Serve(ln, s.routes()))
+	srv := &http.Server{Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
+	fail(srv.Serve(ln))
 }

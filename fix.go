@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"go/format"
 	"go/parser"
@@ -21,9 +22,32 @@ const (
 	remove
 )
 
+type Change struct {
+	File   string `json:"file"`
+	Line   int    `json:"line"`
+	Kind   string `json:"kind"`
+	Before string `json:"before"`
+	After  string `json:"after,omitempty"`
+}
+
+type Preview struct {
+	Files   int      `json:"files"`
+	Removed int      `json:"removed"`
+	Cleaned int      `json:"cleaned"`
+	Review  int      `json:"review"`
+	Skipped int      `json:"skipped"`
+	Changes []Change `json:"changes"`
+}
+
 type fixResult struct {
 	out                      []byte
 	removed, cleaned, review int
+	changes                  []Change
+	err                      error
+}
+
+func (r *fixResult) note(kind string, i int, before, after string) {
+	r.changes = append(r.changes, Change{Line: i + 1, Kind: kind, Before: strings.TrimSpace(before), After: strings.TrimSpace(after)})
 }
 
 var (
@@ -191,24 +215,28 @@ func fixFile(src []byte, cfg Config) (fixResult, error) {
 			before := lines[i][:start.Column-1]
 			alone := strings.TrimSpace(before) == ""
 			hit := group || matchesComment(c.Text, cfg)
+			old := lines[i]
 			if hit && cfg.FixScope == "smart" {
 				first := k == 0 || endsSentence(cg.List[k-1].Text)
 				text, act := smart(c.Text, first || !alone, cfg)
 				switch act {
 				case leave:
 					res.review++
+					res.note("review", i, old, "")
 				case rewrite:
-					lines[i] = before + text + lineEnd(lines[i])
+					lines[i] = before + text + lineEnd(old)
 					touched[i] = true
 					res.cleaned++
+					res.note("rewrite", i, old, lines[i])
 				case remove:
 					if alone {
 						drop[i] = true
 					} else {
-						lines[i] = strings.TrimRight(before, " \t") + lineEnd(lines[i])
+						lines[i] = strings.TrimRight(before, " \t") + lineEnd(old)
 					}
 					touched[i] = true
 					res.removed++
+					res.note("remove", i, old, "")
 				}
 				continue
 			}
@@ -221,15 +249,17 @@ func fixFile(src []byte, cfg Config) (fixResult, error) {
 						touched[l] = true
 					}
 					res.removed++
+					res.note("remove", i, old, "")
 				case start.Line == end.Line && strings.TrimSpace(after) == "":
-					lines[i] = strings.TrimRight(before, " \t") + lineEnd(lines[i])
+					lines[i] = strings.TrimRight(before, " \t") + lineEnd(old)
 					touched[i] = true
 					res.removed++
+					res.note("remove", i, old, "")
 				}
 				continue
 			}
 			if strings.HasPrefix(c.Text, "//") {
-				tail := lines[i][start.Column-1:]
+				tail := old[start.Column-1:]
 				clean := strings.Map(func(r rune) rune {
 					if invisible[r] {
 						return -1
@@ -240,6 +270,7 @@ func fixFile(src []byte, cfg Config) (fixResult, error) {
 					lines[i] = before + clean
 					touched[i] = true
 					res.cleaned++
+					res.note("clean", i, old, lines[i])
 				}
 			}
 		}
@@ -266,42 +297,86 @@ func fixFile(src []byte, cfg Config) (fixResult, error) {
 	return res, nil
 }
 
-func fixAll(root string, cfg Config, dry bool) error {
-	files, skipped := 0, 0
-	var sum fixResult
-	err := walkFiles(root, cfg, func(rel, abs string, src []byte) error {
-		if filepath.Ext(abs) != ".go" {
-			return nil
+func fixAll(root string, cfg Config, dry bool, out string) error {
+	all, err := listTree(root, cfg, wantedExt(cfg))
+	if err != nil {
+		return err
+	}
+	var entries []entry
+	for _, e := range all {
+		if filepath.Ext(e.abs) == ".go" {
+			entries = append(entries, e)
 		}
+	}
+	type done struct {
+		res fixResult
+		src []byte
+	}
+	results, err := mapFiles(entries, func(_ int, _ entry, src []byte) done {
 		res, err := fixFile(src, cfg)
-		if err != nil {
-			skipped++
-			fmt.Printf("fix: skipped %s: %v\n", rel, err)
-			return nil
-		}
-		sum.review += res.review
+		res.err = err
 		if res.removed == 0 && res.cleaned == 0 {
-			return nil
+			return done{res: res}
 		}
-		files++
-		sum.removed += res.removed
-		sum.cleaned += res.cleaned
-		if dry {
-			return nil
-		}
-		info, err := os.Stat(abs)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(abs, res.out, info.Mode().Perm())
+		return done{res, src}
 	})
 	if err != nil {
 		return err
+	}
+	pre := Preview{Changes: []Change{}}
+	var set *undoSet
+	for i, d := range results {
+		e := entries[i]
+		if d.res.err != nil {
+			pre.Skipped++
+			fmt.Printf("fix: skipped %s: %v\n", e.rel, d.res.err)
+			continue
+		}
+		for _, c := range d.res.changes {
+			c.File = e.rel
+			pre.Changes = append(pre.Changes, c)
+		}
+		pre.Review += d.res.review
+		if d.src == nil {
+			continue
+		}
+		pre.Files++
+		pre.Removed += d.res.removed
+		pre.Cleaned += d.res.cleaned
+		if dry {
+			continue
+		}
+		if set == nil {
+			if set, err = newUndo(root); err != nil {
+				return err
+			}
+		}
+		if err = set.replace(e.rel, e.abs, d.src, d.res.out); err != nil {
+			break
+		}
+	}
+	if set != nil {
+		if serr := set.save(); serr != nil && err == nil {
+			err = serr
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if out != "" {
+		data, err := json.MarshalIndent(pre, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(out, data, 0o600); err != nil {
+			return err
+		}
 	}
 	mode := "changed"
 	if dry {
 		mode = "would change"
 	}
-	fmt.Printf("fix: %s %d files, %d comments removed, %d comments cleaned, %d left for review, %d files skipped\n", mode, files, sum.removed, sum.cleaned, sum.review, skipped)
+	fmt.Printf("fix: %s %d files, %d comments removed, %d comments cleaned, %d left for review, %d files skipped\n",
+		mode, pre.Files, pre.Removed, pre.Cleaned, pre.Review, pre.Skipped)
 	return nil
 }

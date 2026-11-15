@@ -25,6 +25,19 @@ type Report struct {
 	Findings   []Finding      `json:"findings"`
 }
 
+func checkFile(e entry, src []byte, cfg Config) []Finding {
+	out := checkText(e.rel, src, cfg)
+	out = append(out, checkSecrets(e.rel, src)...)
+	if filepath.Ext(e.abs) == ".go" {
+		out = append(out, checkGo(e.rel, src, cfg.comments)...)
+		out = append(out, checkLaws(e.rel, src, cfg)...)
+	}
+	if tsExt[filepath.Ext(e.abs)] {
+		out = append(out, checkTS(e.rel, src, cfg)...)
+	}
+	return out
+}
+
 func scan(root string, cfg Config) (*Report, error) {
 	rep := &Report{Tool: "limator", Version: version, Findings: []Finding{}, Exceptions: []Exception{}}
 	rep.Counts, rep.Suppressed = map[string]int{}, map[string]int{}
@@ -38,22 +51,35 @@ func scan(root string, cfg Config) (*Report, error) {
 	for _, l := range cfg.Laws {
 		rep.Rules = append(rep.Rules, Rule{l.ID, l.Name, l.Msg})
 	}
-	var all []Finding
-	err := walkFiles(root, cfg, func(rel, abs string, src []byte) error {
-		rep.Files++
-		all = append(all, checkText(rel, src, cfg)...)
-		all = append(all, checkSecrets(rel, src)...)
-		if filepath.Ext(abs) == ".go" {
-			all = append(all, checkGo(rel, src, cfg.comments)...)
-			all = append(all, checkLaws(rel, src, cfg)...)
+	entries, err := listTree(root, cfg, wantedExt(cfg))
+	if err != nil {
+		return nil, err
+	}
+	store := openCache(root, cfg)
+	keys := make([]string, len(entries))
+	found, err := mapFiles(entries, func(i int, e entry, src []byte) []Finding {
+		if store == nil {
+			return checkFile(e, src, cfg)
 		}
-		if tsExt[filepath.Ext(abs)] {
-			all = append(all, checkTS(rel, src, cfg)...)
+		key := fileKey(e.rel, src)
+		keys[i] = key
+		if hit, ok := store.old[key]; ok {
+			return hit
 		}
-		return nil
+		return checkFile(e, src, cfg)
 	})
 	if err != nil {
 		return nil, err
+	}
+	if store != nil {
+		if err := store.save(keys, found); err != nil {
+			fmt.Fprintln(os.Stderr, "limator: cache not saved:", err)
+		}
+	}
+	rep.Files = len(entries)
+	var all []Finding
+	for _, f := range found {
+		all = append(all, f...)
 	}
 	for _, im := range cfg.Imports {
 		all = append(all, importTool(cfg.dir, im)...)

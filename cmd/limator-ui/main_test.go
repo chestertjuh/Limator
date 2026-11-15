@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,110 +12,128 @@ import (
 func testServer(t *testing.T) (*server, *[][]string) {
 	t.Helper()
 	var calls [][]string
-	s := &server{dir: "proj", cfg: "cfg.json", token: "secret", host: "127.0.0.1:8765", work: t.TempDir()}
-	s.run = func(args ...string) (string, error) {
-		calls = append(calls, args)
+	s := &server{dir: t.TempDir(), who: "tester", token: "secret", host: "127.0.0.1:8765", work: t.TempDir(), bin: "limator"}
+	s.run = func(bin string, args ...string) (string, error) {
+		calls = append(calls, append([]string{bin}, args...))
 		for i, a := range args {
-			if a == "-o" && i+1 < len(args) {
-				if err := os.WriteFile(args[i+1], []byte("<html>report</html>"), 0o644); err != nil {
+			if a == "-o" {
+				if err := os.WriteFile(args[i+1], []byte(`{"ok":true}`), 0o600); err != nil {
 					return "", err
 				}
 			}
 		}
-		return "done", nil
+		return "ran " + args[0], nil
 	}
 	return s, &calls
 }
 
-func do(s *server, method, target, body string) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(method, target, strings.NewReader(body))
-	r.Host = s.host
+func do(s *server, method, target, body string, origin string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, "http://127.0.0.1:8765"+target, strings.NewReader(body))
 	if body != "" {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if origin != "" {
+		r.Header.Set("Origin", origin)
 	}
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 	return w
 }
 
-func TestAccessNeedsTokenAndLocalHost(t *testing.T) {
+func TestAccessNeedsTokenLocalHostAndOwnOrigin(t *testing.T) {
 	s, _ := testServer(t)
-	if w := do(s, "GET", "/", ""); w.Code != http.StatusForbidden {
-		t.Errorf("no token: %d", w.Code)
+	if w := do(s, "GET", "/", "", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("no token: %d", w.Code)
 	}
-	if w := do(s, "GET", "/?t=wrong", ""); w.Code != http.StatusForbidden {
-		t.Errorf("wrong token: %d", w.Code)
+	if w := do(s, "POST", "/run?t=secret", "a=scan", "http://evil.example"); w.Code != http.StatusForbidden {
+		t.Fatalf("foreign origin: %d", w.Code)
 	}
-	r := httptest.NewRequest("GET", "/?t=secret", nil)
-	r.Host = "evil.example"
+	r := httptest.NewRequest("GET", "http://evil.example/?t=secret", nil)
 	w := httptest.NewRecorder()
 	s.routes().ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
-		t.Errorf("foreign host: %d", w.Code)
+		t.Fatalf("wrong host: %d", w.Code)
 	}
-	if w := do(s, "GET", "/?t=secret", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Limator") {
-		t.Errorf("home: %d", w.Code)
+	w = do(s, "GET", "/?t=secret", "", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Security-Policy"), "default-src 'none'") {
+		t.Fatalf("home: %d %q", w.Code, w.Header().Get("Content-Security-Policy"))
 	}
 }
 
 func TestActions(t *testing.T) {
 	s, calls := testServer(t)
-	if w := do(s, "GET", "/run?t=secret", ""); w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("GET run: %d", w.Code)
+	if w := do(s, "POST", "/run?t=secret", "a=fix", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("fix without confirm: %d", w.Code)
 	}
-	if w := do(s, "POST", "/run?t=secret", "a=fix"); w.Code != http.StatusBadRequest {
-		t.Errorf("fix without confirm: %d", w.Code)
+	if w := do(s, "POST", "/run?t=secret", "a=undo", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("undo without confirm: %d", w.Code)
 	}
-	if w := do(s, "POST", "/run?t=secret", "a=delete"); w.Code != http.StatusBadRequest {
-		t.Errorf("unknown action: %d", w.Code)
+	if w := do(s, "POST", "/run?t=secret", "a=read&file=-x&fn=F", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("flag as file: %d", w.Code)
+	}
+	if w := do(s, "POST", "/run?t=secret", "a=gate", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("gate without baseline: %d", w.Code)
+	}
+	if w := do(s, "GET", "/run?t=secret&a=scan", "", ""); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("get: %d", w.Code)
 	}
 	if len(*calls) != 0 {
-		t.Fatalf("scanner ran without a valid request: %v", *calls)
+		t.Fatalf("refused requests ran the scanner: %v", *calls)
 	}
-	if w := do(s, "POST", "/run?t=secret", "a=preview"); w.Code != http.StatusOK || w.Body.String() != "done" {
-		t.Errorf("preview: %d %q", w.Code, w.Body.String())
-	}
-	if got := strings.Join((*calls)[0], " "); got != "fix proj -c cfg.json -n yes" {
-		t.Errorf("preview ran: %s", got)
-	}
-	if w := do(s, "POST", "/run?t=secret", "a=fix&confirm=yes"); w.Code != http.StatusOK {
-		t.Errorf("fix: %d", w.Code)
-	}
-	if got := strings.Join((*calls)[1], " "); got != "fix proj -c cfg.json" {
-		t.Errorf("fix ran: %s", got)
+	if w := do(s, "POST", "/run?t=secret", "a=undo&confirm=yes", ""); w.Code != http.StatusOK || (*calls)[0][1] != "undo" {
+		t.Fatalf("undo: %d %v", w.Code, *calls)
 	}
 }
 
-func TestReport(t *testing.T) {
-	s, _ := testServer(t)
-	if w := do(s, "GET", "/report?t=secret", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "report") {
-		t.Errorf("report: %d %q", w.Code, w.Body.String())
-	}
-}
-
-func TestMarkAsReadAndDocuments(t *testing.T) {
+func TestDataAndDownloads(t *testing.T) {
 	s, calls := testServer(t)
-	s.who = "reviewer"
-	for _, body := range []string{"a=read", "a=read&file=a.go", "a=read&file=-o&fn=x", "a=read&file=a.go&fn=-c"} {
-		if w := do(s, "POST", "/run?t=secret", body); w.Code != http.StatusBadRequest {
-			t.Errorf("%s: %d", body, w.Code)
+	if w := do(s, "GET", "/data/changes?t=secret", "", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "ok") {
+		t.Fatalf("changes: %d %s", w.Code, w.Body)
+	}
+	if got := strings.Join((*calls)[0][1:], " "); !strings.HasPrefix(got, "fix "+s.dir+" -n yes -o ") {
+		t.Fatalf("preview must not write: %s", got)
+	}
+	if w := do(s, "GET", "/download/bom.json?t=secret", "", ""); w.Code != http.StatusOK ||
+		!strings.Contains(w.Header().Get("Content-Disposition"), "attachment") {
+		t.Fatalf("download: %d", w.Code)
+	}
+	if w := do(s, "GET", "/data/../main.go?t=secret", "", ""); w.Code == http.StatusOK {
+		t.Fatalf("unknown document served")
+	}
+}
+
+func TestExceptionNeedsReasonAndIsStored(t *testing.T) {
+	s, _ := testServer(t)
+	cfg := filepath.Join(s.dir, "limator.json")
+	if err := os.WriteFile(cfg, []byte(`{"max_line_length":120,"exceptions":[{"rule":"L001","path":"a.go","reason":"kept on purpose"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if w := do(s, "POST", "/except?t=secret", "rule=L004&path=b.go&reason=short", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("short reason: %d", w.Code)
+	}
+	if w := do(s, "POST", "/except?t=secret", "rule=L004&path=b.go&reason=the+error+is+logged+one+line+up", ""); w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body)
+	}
+	got, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"max_line_length": 120`, "kept on purpose",
+		`"rule": "L004"`, "logged one line up"} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("missing %s in:\n%s", want, got)
 		}
 	}
-	if len(*calls) != 0 {
-		t.Fatalf("scanner ran on a refused request: %v", *calls)
+}
+
+func TestFolderMustExist(t *testing.T) {
+	s, _ := testServer(t)
+	old := s.dir
+	if w := do(s, "POST", "/dir?t=secret", "dir="+filepath.ToSlash(filepath.Join(old, "missing")), ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing folder: %d", w.Code)
 	}
-	if w := do(s, "POST", "/run?t=secret", "a=read&file=a.go&fn=load"); w.Code != http.StatusOK {
-		t.Errorf("read: %d", w.Code)
-	}
-	if got := strings.Join((*calls)[0], " "); got != "read proj -c cfg.json -who reviewer -f a.go -fn load" {
-		t.Errorf("read ran: %s", got)
-	}
-	for _, path := range []string{"/readlist", "/audit"} {
-		if w := do(s, "GET", path+"?t=secret", ""); w.Code != http.StatusOK {
-			t.Errorf("%s: %d", path, w.Code)
-		}
-		if w := do(s, "GET", path, ""); w.Code != http.StatusForbidden {
-			t.Errorf("%s without token: %d", path, w.Code)
-		}
+	next := t.TempDir()
+	if w := do(s, "POST", "/dir?t=secret", "dir="+filepath.ToSlash(next), ""); w.Code != http.StatusOK || s.dir != filepath.Clean(next) {
+		t.Fatalf("switch: %d %s", w.Code, s.dir)
 	}
 }

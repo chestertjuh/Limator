@@ -54,6 +54,7 @@ type Config struct {
 	CapsBaseline     string      `json:"caps_baseline"`
 	Laws             []Law       `json:"laws"`
 	comments         []*regexp.Regexp
+	NoCache          bool `json:"no_cache"`
 	sum              string
 	dir              string
 }

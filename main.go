@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const version = "0.11.0"
+const version = "0.12.0"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`
@@ -19,7 +19,8 @@ usage:
   limator scan   <dir> [-c config.json]
   limator report <dir> [-c config.json] -o file [-f json|sarif|html]
   limator gate   <dir> [-c config.json] -b baseline.json
-  limator fix    <dir> [-c config.json] [-n yes]
+  limator fix    <dir> [-c config.json] [-n yes] [-o changes.json]
+  limator undo   <dir>
   limator inventory <dir> [-c config.json] -o file [-f json|cyclonedx]
   limator audit  <dir> [-c config.json] -o audit.json
   limator readlist <dir> [-c config.json] [-n 20] [-o file]
@@ -46,7 +47,7 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) < 3 || !strings.Contains(" scan report gate fix inventory audit readlist read coverage origin caps ", " "+cmd+" ") {
+	if len(os.Args) < 3 || !strings.Contains(" scan report gate fix undo inventory audit readlist read coverage origin caps ", " "+cmd+" ") {
 		usage()
 	}
 	root := os.Args[2]
@@ -78,9 +79,17 @@ func main() {
 		}
 		return
 	}
-	if cmd == "fix" {
-		if err := fixAll(root, cfg, opt["-n"] != ""); err != nil {
+	if cmd == "undo" {
+		if err := undoLast(root); err != nil {
 			fail(err)
+		}
+	}
+	if cmd == "fix" {
+		if err := fixAll(root, cfg, opt["-n"] != "", opt["-o"]); err != nil {
+			fail(err)
+		}
+		if opt["-n"] != "" {
+			return
 		}
 	}
 	rep, err := scan(root, cfg)

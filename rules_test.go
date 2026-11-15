@@ -657,7 +657,8 @@ func TestTypeScriptRules(t *testing.T) {
 }
 
 func TestFixSmart(t *testing.T) {
-	src := "package p\n\n// Add adds two numbers (TICKET-12).\n// TICKET-13: it never overflows\n// because of TICKET-14 here.\nfunc Add(a, b int) int {\n\t// TICKET-15\n\treturn a + b // TICKET-16\n}\n"
+	src := "package p\n\n// Add adds two numbers (TICKET-12).\n// TICKET-13: it never overflows\n" +
+		"// because of TICKET-14 here.\nfunc Add(a, b int) int {\n\t// TICKET-15\n\treturn a + b // TICKET-16\n}\n"
 	want := "package p\n\n// Add adds two numbers.\n// It never overflows\n// because of TICKET-14 here.\nfunc Add(a, b int) int {\n\treturn a + b\n}\n"
 	res, err := fixFile([]byte(src), fixCfg("smart"))
 	if err != nil {
@@ -679,5 +680,83 @@ func TestFixSmartKeepsBrokenSentence(t *testing.T) {
 	}
 	if string(res.out) != src || res.review != 1 {
 		t.Fatalf("review %d, got:\n%s", res.review, res.out)
+	}
+}
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "limator-cache")
+	if err != nil {
+		panic(err)
+	}
+	cacheHome = func() (string, error) { return dir, nil }
+	code := m.Run()
+	if err := os.RemoveAll(dir); err != nil {
+		panic(err)
+	}
+	os.Exit(code)
+}
+
+func TestCacheGivesSameReport(t *testing.T) {
+	dir := t.TempDir()
+	src := "package p\n\nfunc F() {\n\t_ = recover()\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cold, err := scan(dir, Config{Extensions: []string{".go"}, MaxFileLines: 1000, MaxLineLength: 160})
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm, err := scan(dir, Config{Extensions: []string{".go"}, MaxFileLines: 1000, MaxLineLength: 160})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := scan(dir, Config{Extensions: []string{".go"}, MaxFileLines: 1000, MaxLineLength: 160, NoCache: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cold.Findings) == 0 || cold.Hash != warm.Hash || cold.Hash != plain.Hash {
+		t.Fatalf("cold %s warm %s plain %s findings %d", cold.Hash, warm.Hash, plain.Hash, len(cold.Findings))
+	}
+}
+
+func TestFixThenUndo(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.go"), filepath.Join(dir, "b.go")
+	srcA := "package p\n\n// TICKET-1\nvar A = 1\n"
+	srcB := "package p\n\n// TICKET-2\nvar B = 1\n"
+	for name, src := range map[string]string{a: srcA, b: srcB} {
+		if err := os.WriteFile(name, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := fixCfg("line")
+	cfg.Extensions = []string{".go"}
+	out := filepath.Join(t.TempDir(), "changes.json")
+	if err := fixAll(dir, cfg, false, out); err != nil {
+		t.Fatal(err)
+	}
+	fixed, err := os.ReadFile(a)
+	if err != nil || strings.Contains(string(fixed), "TICKET") {
+		t.Fatalf("not fixed: %s %v", fixed, err)
+	}
+	var pre Preview
+	data, err := os.ReadFile(out)
+	if err != nil || json.Unmarshal(data, &pre) != nil || pre.Files != 2 || len(pre.Changes) != 2 {
+		t.Fatalf("preview: %s %v", data, err)
+	}
+	edited := "package p\n\nvar B = 2\n"
+	if err := os.WriteFile(b, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := undoLast(dir); err != nil {
+		t.Fatal(err)
+	}
+	gotA, _ := os.ReadFile(a)
+	gotB, _ := os.ReadFile(b)
+	if string(gotA) != srcA || string(gotB) != edited {
+		t.Fatalf("a:\n%s\nb:\n%s", gotA, gotB)
+	}
+	if err := undoLast(dir); err == nil {
+		t.Fatal("second undo should find nothing")
 	}
 }

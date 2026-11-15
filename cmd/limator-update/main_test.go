@@ -106,7 +106,10 @@ func TestCheckComparesModificationTimes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(index), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for body, want := range map[string]string{`{"modified":"2026-01-01T00:00:00Z"}`: "update available: local", `{"modified":"2026-01-02T00:00:00Z"}`: "up to date"} {
+	for body, want := range map[string]string{
+		`{"modified":"2026-01-01T00:00:00Z"}`: "update available: local",
+		`{"modified":"2026-01-02T00:00:00Z"}`: "up to date",
+	} {
 		if err := os.WriteFile(index, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}

@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.11.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.12.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -73,21 +73,35 @@ Optional `limator.json` in the scanned folder, or pass `-c path`.
 
 ## Fix
 
-`fix` changes Go files in place. It removes comments that match `comment_patterns` and strips invisible characters from comments. With `"fix_scope": "group"` it removes the whole comment block that contains a match; the default removes only the matching comment. With `"fix_scope": "smart"` it removes only the reference itself when the line also carries real explanation (a bracketed aside, or a leading `REF:`), drops a line that holds nothing else, and leaves every other match untouched and counts it as left for review; those stay visible as L001 findings. `-n yes` shows what would change without writing.
+`fix` changes Go files in place. It removes comments that match `comment_patterns` and strips invisible characters from comments. With `"fix_scope": "group"` it removes the whole comment block that contains a match; the default removes only the matching comment. With `"fix_scope": "smart"` it removes only the reference itself when the line also carries real explanation (a bracketed aside, or a leading `REF:`), drops a line that holds nothing else, and leaves every other match untouched and counts it as left for review; those stay visible as L001 findings. `-n yes` shows what would change without writing, and `-o changes.json` writes every change with its line before and after. Files are replaced through a temporary file, and a copy of each changed file is kept outside the scanned folder. `limator undo <dir>` puts the copies of the last fix back; a file that changed after the fix is left alone.
+
+Scanning uses every processor core and keeps the findings of unchanged files in the user cache folder, so a second scan only reads and hashes. The report is the same with and without it; `"no_cache": true` turns it off.
 
 Every change is proven before it is written: the code tokens of the file must be identical before and after, so only comments can differ. Directives such as `//go:build` are never touched, and files that import `C` are skipped.
 
 ## Web UI
 
-`limator-ui` is a separate small program for working from the browser: scan again, preview a fix, apply a fix, and read the report.
+`limator-ui` is a separate small program for doing all of this from the browser.
 
 ```
 go build -o limator-ui ./cmd/limator-ui
-limator-ui -dir ./myproject
+limator-ui -dir /full/path/to/myproject -who yourname
 ```
 
-Besides the report it shows the reading list, where you can mark a function as read (start it with `-who <name>`), and the audit summary. It listens on 127.0.0.1 only and prints a link with a one-time token; requests without that token are refused. It runs the scanner as a separate process, so the scanner itself stays free of network code. Applying a fix asks for confirmation first.
+| Tab | What it does |
+|---|---|
+| Overview | counts per rule, the report hash, scan again, check the gate, fetch vulnerability data |
+| Findings | every finding, filtered by rule and by text; record an exception with a reason |
+| Fix | every change the fix would make, before and after; apply it; undo the last fix |
+| Review | the matches the fix leaves alone, for rewriting by hand |
+| Reading list | the functions most worth reading; mark one as read |
+| Audit | the audit summary |
+| Inventory | dependencies with their licenses |
+| Reports and folder | download the HTML, SARIF and JSON reports, the audit, the inventory and the CycloneDX file; open another folder |
 
+Flags: `-c config`, `-who name` (recorded with a read mark), `-b baseline.json` (enables the gate button), `-vulndb folder` (enables the update button, which runs `limator-update`), `-port`, `-bin`.
+
+It listens on 127.0.0.1 only and prints a link with a random token. Requests without the token, with another Host or from another origin are refused. The page loads nothing from outside and carries a content security policy. Applying a fix and undoing one ask for confirmation, and a preview never writes. It starts the scanner as a separate process, so the scanner itself still contains no network code.
 ## Inventory and audit
 
 `inventory` writes a register of every scanned file (path, line count, SHA-256, and the leading comment of Go files) and of every dependency found in `go.mod` and `package.json` files, with the license where it can be read locally. Go licenses are read from `vendor` or the module cache, npm licenses from `node_modules`. Nothing is downloaded; what cannot be read locally is listed as `unknown`. `-f cyclonedx` writes the dependencies as a CycloneDX 1.5 document.
