@@ -1,3 +1,5 @@
+// caps.go lists what each package can do from its imports and checks project laws.
+
 package main
 
 import (

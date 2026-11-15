@@ -1,3 +1,5 @@
+// origin.go records who wrote a function: a person, a model or both.
+
 package main
 
 import (

@@ -1,3 +1,5 @@
+// extras.go holds the commit hook, file headers, the fix for TypeScript comments, line exceptions and churn.
+
 package main
 
 import (
@@ -256,4 +258,25 @@ func lineException(rule string) (string, int, bool) {
 	}
 	n, err := strconv.Atoi(parts[2])
 	return parts[1], n, err == nil
+}
+
+func loadChurn(cfg Config) (map[string]int, error) {
+	out := map[string]int{}
+	if cfg.ChurnFile == "" {
+		return out, nil
+	}
+	file := cfg.ChurnFile
+	if !filepath.IsAbs(file) {
+		file = filepath.Join(cfg.dir, file)
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		return nil, fmt.Errorf("churn_file: %w", err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			out[filepath.ToSlash(name)]++
+		}
+	}
+	return out, nil
 }

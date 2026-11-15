@@ -1,3 +1,5 @@
+// rules_test.go tests every rule and every command of the scanner.
+
 package main
 
 import (
@@ -854,5 +856,26 @@ func TestHookRefusesAForeignHook(t *testing.T) {
 	}
 	if err := installHook(dir, "", ""); err == nil {
 		t.Fatal("a hook somebody else wrote must be left alone")
+	}
+}
+
+func TestChurnRaisesTheReadingScore(t *testing.T) {
+	dir := t.TempDir()
+	src := "package p\n\nfunc Calm() int { return 1 }\n\nfunc Busy() int { return 2 }\n"
+	for _, name := range []string{"calm.go", "busy.go"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "churn.txt"), []byte("busy.go\n\nbusy.go\nbusy.go\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{Extensions: []string{".go"}, MaxFileLines: 1000, MaxLineLength: 160, ChurnFile: filepath.Join(dir, "churn.txt"), NoCache: true}
+	all, err := units(dir, cfg, nil)
+	if err != nil || len(all) == 0 {
+		t.Fatalf("%v %d units", err, len(all))
+	}
+	if all[0].File != "busy.go" || all[0].Churn != 3 {
+		t.Fatalf("first %s churn %d", all[0].File, all[0].Churn)
 	}
 }

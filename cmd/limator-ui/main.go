@@ -1,3 +1,5 @@
+// main.go is the local web server that drives the scanner from a browser.
+
 package main
 
 import (
@@ -330,7 +332,13 @@ func editConfig(file string, change func(doc map[string]json.RawMessage) error) 
 	if err := os.WriteFile(tmp, append(next, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, file)
+	if err := os.Rename(tmp, file); err != nil {
+		if gone := os.Remove(tmp); gone != nil {
+			return fmt.Errorf("%w; the temporary file %s is still there", err, tmp)
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *server) folder(w http.ResponseWriter, r *http.Request) {

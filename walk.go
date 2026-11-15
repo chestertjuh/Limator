@@ -1,3 +1,5 @@
+// walk.go lists the files to scan and reads them on every processor core.
+
 package main
 
 import (

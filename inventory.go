@@ -1,3 +1,5 @@
+// inventory.go registers files, dependencies and licenses and builds the audit document.
+
 package main
 
 import (

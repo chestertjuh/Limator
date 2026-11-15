@@ -1,3 +1,5 @@
+// packs.go loads rule packs pinned by hash and reads SARIF from other tools.
+
 package main
 
 import (

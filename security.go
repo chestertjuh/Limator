@@ -1,3 +1,5 @@
+// security.go finds secrets, risky calls and modules with known vulnerabilities.
+
 package main
 
 import (

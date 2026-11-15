@@ -1,3 +1,5 @@
+// undo.go writes files safely and keeps copies so a fix can be taken back.
+
 package main
 
 import (
@@ -32,7 +34,20 @@ func writeAtomic(path string, data []byte, perm fs.FileMode) error {
 	if err := os.WriteFile(tmp, data, perm); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	var err error
+	for try := 0; try < 6; try++ {
+		if err = os.Rename(tmp, path); err == nil {
+			return nil
+		}
+		time.Sleep(time.Duration(try+1) * 50 * time.Millisecond)
+	}
+	if gone := os.Remove(tmp); gone != nil {
+		return fmt.Errorf("%w; the temporary file %s is still there", err, tmp)
+	}
+	if direct := os.WriteFile(path, data, perm); direct != nil {
+		return err
+	}
+	return nil
 }
 
 func undoHome(root string) (string, error) {

@@ -1,3 +1,5 @@
+// main_test.go tests the updater against a local server.
+
 package main
 
 import (

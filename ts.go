@@ -1,3 +1,5 @@
+// ts.go separates code, comments and strings in TypeScript and JavaScript and checks them.
+
 package main
 
 import (

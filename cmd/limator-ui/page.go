@@ -1,3 +1,5 @@
+// page.go holds the HTML and styles of the page.
+
 package main
 
 import "html/template"

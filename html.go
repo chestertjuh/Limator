@@ -1,3 +1,5 @@
+// html.go writes the report as one self-contained HTML file.
+
 package main
 
 import (

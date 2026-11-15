@@ -1,3 +1,5 @@
+// cache.go keeps the findings of unchanged files between scans.
+
 package main
 
 import (

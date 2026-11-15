@@ -1,3 +1,5 @@
+// script.go holds the script of the page.
+
 package main
 
 const script = `
@@ -57,7 +59,24 @@ function busy(on, what) {
   statusBox.textContent = what + '...';
   timer = setInterval(function () { statusBox.textContent = what + '... ' + Math.round((Date.now() - start) / 1000) + ' s'; }, 1000);
 }
-function done(text) { busy(false); statusBox.textContent = tr(text); }
+var outNl = [
+  [/fix: changed (\d+) files, (\d+) comments removed, (\d+) comments cleaned, (\d+) left for review, (\d+) files skipped/,
+    'herstel: $1 bestanden gewijzigd, $2 commentaarregels verwijderd, $3 herschreven, $4 om na te kijken, $5 bestanden overgeslagen'],
+  [/undo: restored (\d+) files, (\d+) left alone/, 'terugdraaien: $1 bestanden teruggezet, $2 met rust gelaten'],
+  [/undo: left (\S+) alone, it changed after the fix/g, 'terugdraaien: $1 is na het herstel gewijzigd en blijft staan'],
+  [/gate: ok/, 'poort: in orde'], [/gate: FAIL/g, 'poort: MEER GEWORDEN'], [/gate: better/g, 'poort: minder geworden'],
+  [/gate: baseline written to/, 'poort: basislijn geschreven naar'],
+  [/hook: every commit now runs the gate against/, 'hook: elke commit draait nu de poort tegen'],
+  [/header: added to/, 'kopregel: toegevoegd aan'], [/headers: (\d+) Go files have no leading comment/, 'kopregels: $1 Go-bestanden zonder kopregel'],
+  [/exception added for (\S+) in/, 'uitzondering toegevoegd voor $1 in'], [/kept as it is:/, 'zo gelaten:'],
+  [/folder set to/, 'map ingesteld op'], [/limator: nothing to undo/, 'limator: er is niets om terug te draaien']
+];
+function done(text) {
+  busy(false);
+  text = tr(text);
+  if (lang === 'nl') outNl.forEach(function (pair) { text = text.replace(pair[0], pair[1]); });
+  statusBox.textContent = text;
+}
 function get(name, what) {
   busy(true, what);
   return fetch(url('/data/' + name)).then(function (r) {
@@ -244,7 +263,7 @@ function readingList(units) {
   units.forEach(function (u) {
     var mark = el('button', 'small', 'Mark as read');
     var r = row([el('span', 'id', u.score), el('span', 'where', u.file + ':' + u.line + '  ' + u.func),
-      el('span', 'dim', (u.sensitive || []).join(' ') + '  complexity ' + u.complexity + ', findings ' + u.findings), mark]);
+      el('span', 'dim', (u.sensitive || []).join(' ') + '  complexity ' + u.complexity + ', findings ' + u.findings + ', changes ' + (u.churn || 0)), mark]);
     mark.onclick = function () { post('/run', {a: 'read', file: u.file, fn: u.func}, 'Marking').then(function () { r.remove(); }, quiet); };
     box.append(r);
   });

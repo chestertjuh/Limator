@@ -1,3 +1,5 @@
+// main.go fetches vulnerability data and rule packs; it is the only program that uses the network.
+
 package main
 
 import (

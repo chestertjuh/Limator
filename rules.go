@@ -1,3 +1,5 @@
+// rules.go holds the built-in rules for text and Go code.
+
 package main
 
 import (

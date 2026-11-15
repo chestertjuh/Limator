@@ -1,3 +1,5 @@
+// reading.go ranks functions by how much they need reading and tracks read marks.
+
 package main
 
 import (
@@ -28,6 +30,7 @@ type Unit struct {
 	Sensitive  []string `json:"sensitive"`
 	Findings   int      `json:"findings"`
 	Score      int      `json:"score"`
+	Churn      int      `json:"churn"`
 	Read       bool     `json:"read"`
 	Origin     string   `json:"origin"`
 }
@@ -206,6 +209,10 @@ func units(root string, cfg Config, rep *Report) ([]Unit, error) {
 	if err != nil {
 		return nil, err
 	}
+	churn, err := loadChurn(cfg)
+	if err != nil {
+		return nil, err
+	}
 	read := map[string]string{}
 	for _, m := range marks {
 		read[m.File+"|"+m.Func] = m.Hash
@@ -229,7 +236,8 @@ func units(root string, cfg Config, rep *Report) ([]Unit, error) {
 					u.Findings++
 				}
 			}
-			u.Score = 3*len(u.Sensitive) + u.Complexity + 2*u.Findings
+			u.Churn = churn[rel]
+			u.Score = 3*len(u.Sensitive) + u.Complexity + 2*u.Findings + 2*min(u.Churn, 10)
 			u.Read = read[rel+"|"+u.Func] == u.Hash
 			u.Origin = origins[rel+"|"+u.Func]
 			all = append(all, u)

@@ -4,7 +4,7 @@ Offline code hygiene for codebases that grow faster than people can read them.
 
 Limator scans a local folder, counts what is wrong per rule, and refuses changes that make a count go up. It runs on CPU only: no AI, no network, no telemetry. The same input always gives the same report and the same hash.
 
-Status: 0.14.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
+Status: 0.15.0, early. Go rules, text rules for any file type, rules as data, exceptions with a reason, import of other tools' output, JSON, SARIF and HTML reports. The HTML report is one file that opens in any browser, with no server and nothing loaded from outside. Every rule has a test.
 
 ## Use
 
@@ -73,7 +73,7 @@ Optional `limator.json` in the scanned folder, or pass `-c path`.
 
 ## Fix
 
-`fix` changes Go files in place. It removes comments that match `comment_patterns` and strips invisible characters from comments. With `"fix_scope": "group"` it removes the whole comment block that contains a match; the default removes only the matching comment. With `"fix_scope": "smart"` it removes only the reference itself when the line also carries real explanation (a bracketed aside, or a leading `REF:`), drops a line that holds nothing else, and leaves every other match untouched and counts it as left for review; those stay visible as L001 findings. `-n yes` shows what would change without writing, and `-o changes.json` writes every change with its line before and after. Files are replaced through a temporary file, and a copy of each changed file is kept outside the scanned folder. `limator undo <dir>` puts the copies of the last fix back; a file that changed after the fix is left alone.
+`fix` changes Go files in place. It removes comments that match `comment_patterns` and strips invisible characters from comments. With `"fix_scope": "group"` it removes the whole comment block that contains a match; the default removes only the matching comment. With `"fix_scope": "smart"` it removes only the reference itself when the line also carries real explanation (a bracketed aside, or a leading `REF:`), drops a line that holds nothing else, and leaves every other match untouched and counts it as left for review; those stay visible as L001 findings. `-n yes` shows what would change without writing, and `-o changes.json` writes every change with its line before and after. Files are replaced through a temporary file (or written in place when another program holds the file open), and a copy of each changed file is kept outside the scanned folder. `limator undo <dir>` puts the copies of the last fix back; a file that changed after the fix is left alone.
 
 Scanning uses every processor core and keeps the findings of unchanged files in the user cache folder, so a second scan only reads and hashes. The report is the same with and without it; `"no_cache": true` turns it off.
 
@@ -104,6 +104,8 @@ limator-ui -dir /full/path/to/myproject -who yourname
 Flags: `-c config`, `-who name` (recorded with a read mark), `-lang en|nl`, `-b baseline.json` (default `limator-baseline.json` beside the config), `-vulndb folder` (default the `vuln_db` of the config; the update button sets one up when there is none), `-port`, `-bin`. The overview can also write a pre-commit hook that runs the gate on every commit.
 
 It listens on 127.0.0.1 only and prints a link with a random token. Requests without the token, with another Host or from another origin are refused. The page loads nothing from outside and carries a content security policy. Applying a fix and undoing one ask for confirmation, and a preview never writes. It starts the scanner as a separate process, so the scanner itself still contains no network code.
+The reading list can weigh how often a file changes. Write the changed paths to a file, for example with `git log --since=90.days --name-only --format= > churn.txt`, and name it as `"churn_file"` in the config; a file that changes often moves up the list. Limator reads the file and never starts git itself.
+
 ## Keeping it clean
 
 `limator hook <dir>` writes a git pre-commit hook that runs the gate, so a commit that adds findings is stopped. It leaves a hook it did not write alone. For a nightly run, schedule `limator gate <dir> -b baseline.json` with the scheduler of the system.

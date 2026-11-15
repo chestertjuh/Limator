@@ -1,3 +1,5 @@
+// main_test.go tests access, actions and documents of the web server.
+
 package main
 
 import (

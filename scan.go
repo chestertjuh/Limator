@@ -1,3 +1,5 @@
+// scan.go runs all checks over a folder and builds the report.
+
 package main
 
 import (

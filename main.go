@@ -1,3 +1,5 @@
+// main.go is the command line of the scanner.
+
 package main
 
 import (
@@ -9,7 +11,7 @@ import (
 	"strings"
 )
 
-const version = "0.14.0"
+const version = "0.15.0"
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "limator "+version+`

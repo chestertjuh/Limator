@@ -1,3 +1,5 @@
+// fix.go removes or rewrites matching comments in Go files and proves the code stays the same.
+
 package main
 
 import (

@@ -1,3 +1,5 @@
+// config.go loads and validates the configuration and matches exceptions.
+
 package main
 
 import (
@@ -52,6 +54,7 @@ type Config struct {
 	ReadFile         string      `json:"read_file"`
 	Packs            []Pack      `json:"packs"`
 	OriginFile       string      `json:"origin_file"`
+	ChurnFile        string      `json:"churn_file"`
 	CapsBaseline     string      `json:"caps_baseline"`
 	Laws             []Law       `json:"laws"`
 	comments         []*regexp.Regexp
