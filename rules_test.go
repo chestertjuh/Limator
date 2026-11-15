@@ -772,3 +772,12 @@ func TestFixSmartRemovesLabels(t *testing.T) {
 		t.Fatalf("cleaned %d, review %d, got:\n%s", res.cleaned, res.review, res.out)
 	}
 }
+
+func TestFixSmartKeepsIdentifierCase(t *testing.T) {
+	src := "package p\n\n// TICKET-5: tenantScope fails closed.\n// TICKET-6: the scope fails closed.\nvar X = 1\n"
+	want := "package p\n\n// tenantScope fails closed.\n// The scope fails closed.\nvar X = 1\n"
+	res, err := fixFile([]byte(src), fixCfg("smart"))
+	if err != nil || string(res.out) != want {
+		t.Fatalf("%v, got:\n%s", err, res.out)
+	}
+}

@@ -117,6 +117,15 @@ func hasWord(s string) bool {
 }
 
 func upperFirst(s string) string {
+	end := strings.IndexFunc(s, func(r rune) bool { return unicode.IsSpace(r) || r == ',' || r == ':' || r == ';' })
+	if end < 0 {
+		end = len(s)
+	}
+	for _, r := range s[:end] {
+		if !unicode.IsLower(r) {
+			return s
+		}
+	}
 	r, n := utf8.DecodeRuneInString(s)
 	if n == 0 {
 		return s
